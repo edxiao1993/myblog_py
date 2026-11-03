@@ -1,0 +1,507 @@
+{% extends 'base.html' %}
+{% block content %}
+<style>
+/* Layout & Container */
+.pi-wrapper {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.pi-main-row {
+  min-height: 0;
+}
+@media (min-width: 768px) {
+  #pi-sidebar-drawer {
+    display: block !important;
+    flex: 0 0 210px;
+    width: 210px;
+  }
+  .pi-desktop-sidebar-hidden #pi-sidebar-drawer {
+    display: none !important;
+  }
+  .pi-desktop-sidebar-hidden #pi-main-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex: 0 0 100% !important;
+  }
+  .pi-desktop-sidebar-hidden #pi-sidebar-show-desktop {
+    display: inline-flex !important;
+  }
+}
+@media (max-width: 767.98px) {
+  #pi-sidebar-drawer {
+    max-width: 85vw;
+  }
+}
+
+#pi-main-content { min-width: 0; }
+
+/* Tool execution visibility toggle */
+#pi-app.hide-tools .pi-tool-card {
+  display: none !important;
+}
+
+/* Conversation History */
+.pi-history {
+  overflow-y: auto;
+  max-height: calc(100dvh - 230px);
+}
+@media (max-width: 767.98px) {
+  .pi-history {
+    max-height: calc(100dvh - 170px);
+  }
+}
+.pi-history-btn {
+  background: #ffffff;
+  border-color: #e2e8f0 !important;
+  border-radius: 8px !important;
+  transition: all 0.15s ease-in-out;
+  text-align: left;
+}
+.pi-history-btn:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1 !important;
+}
+.pi-history-btn[aria-current="true"] {
+  background: #eff6ff !important;
+  border-color: #3b82f6 !important;
+  color: #1d4ed8 !important;
+  box-shadow: 0 1px 3px rgba(59, 130, 246, 0.15);
+}
+
+/* Messages Area */
+#pi-messages {
+  min-height: 220px;
+  height: calc(100vh - 310px);
+  height: calc(100dvh - 310px);
+  overflow-y: auto;
+  background: #f8fafc;
+  border-radius: 12px;
+  scroll-behavior: smooth;
+  display: flex;
+  flex-direction: column;
+}
+@media (max-width: 767.98px) {
+  #pi-messages {
+    min-height: 160px;
+    height: calc(100dvh - 350px);
+    padding: 0.75rem !important;
+  }
+}
+
+/* Chat Message Rows & Bubbles */
+.pi-msg-row {
+  width: 100%;
+}
+.pi-bubble-wrap {
+  max-width: 85%;
+}
+@media (max-width: 767.98px) {
+  .pi-bubble-wrap {
+    max-width: 95%;
+  }
+}
+
+.pi-avatar {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.pi-avatar-ai {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: #e0e7ff;
+  border-radius: 50%;
+  font-size: 0.85rem;
+}
+
+/* User Bubble */
+.pi-user-bubble {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #ffffff;
+  border-radius: 18px 18px 4px 18px;
+  padding: 12px 16px;
+  box-shadow: 0 3px 10px rgba(37, 99, 235, 0.18);
+  word-break: break-word;
+}
+.pi-user-bubble .markdown-body,
+.pi-user-bubble .markdown-body p {
+  color: #ffffff;
+  margin-bottom: 0.4rem;
+}
+.pi-user-bubble .markdown-body p:last-child {
+  margin-bottom: 0;
+}
+.pi-user-bubble .markdown-body a {
+  color: #bfdbfe;
+  text-decoration: underline;
+}
+.pi-user-bubble .markdown-body code {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.pi-user-bubble .markdown-body pre {
+  background: rgba(0, 0, 0, 0.3);
+  color: #f8fafc;
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
+/* Assistant Bubble */
+.pi-assistant-bubble {
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px 18px 18px 4px;
+  padding: 14px 18px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+  word-break: break-word;
+}
+.pi-assistant-bubble .markdown-body p {
+  margin-bottom: 0.5rem;
+}
+.pi-assistant-bubble .markdown-body p:last-child {
+  margin-bottom: 0;
+}
+.pi-assistant-bubble .markdown-body pre {
+  background: #1e293b;
+  color: #f8fafc;
+  border-radius: 8px;
+  padding: 12px;
+  position: relative;
+  overflow-x: auto;
+  font-size: 0.88rem;
+  margin: 0.6rem 0;
+}
+.pi-assistant-bubble .markdown-body p > code,
+.pi-assistant-bubble .markdown-body li > code {
+  background: #f1f5f9;
+  color: #0f172a;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #e2e8f0;
+  font-size: 0.88em;
+}
+
+/* Code Copy Button */
+.copy-code-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  line-height: 1.2;
+  background: rgba(255, 255, 255, 0.15);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.copy-code-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+}
+.copy-code-btn.copied {
+  background: #10b981;
+  color: #ffffff;
+  border-color: #10b981;
+}
+
+/* Tool execution card */
+.pi-tool-card {
+  border-radius: 10px;
+  overflow: hidden;
+  max-width: 90%;
+}
+.pi-tool-summary {
+  cursor: pointer;
+  background: #f8fafc;
+}
+.pi-tool-summary::-webkit-details-marker {
+  display: none;
+}
+.tool-output {
+  max-height: 200px;
+  overflow-y: auto;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
+/* Status Indicator Pulse Dot */
+.pi-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  background-color: #94a3b8;
+}
+.pi-dot-ready {
+  background-color: #10b981;
+}
+.pi-dot-busy {
+  background-color: #3b82f6;
+  box-shadow: 0 0 0 rgba(59, 130, 246, 0.4);
+  animation: piPulse 1.5s infinite;
+}
+.pi-dot-error {
+  background-color: #ef4444;
+}
+@keyframes piPulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+}
+
+/* Composer / Input Area */
+#pi-form {
+  border-radius: 12px;
+  background: #ffffff;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+#pi-form:focus-within {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15) !important;
+}
+#pi-input {
+  resize: none;
+  font-size: 0.95rem;
+}
+#pi-input:focus {
+  outline: none;
+  box-shadow: none;
+}
+</style>
+
+<div id="pi-app" data-csrf="{{ csrf }}" data-upload-limit="{{ upload_limit_mb }}" class="pi-wrapper hide-tools">
+    <!-- Top Header Bar -->
+    <header class="card border shadow-xs mb-2">
+        <div class="card-body p-2">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div class="d-flex align-items-center gap-2">
+                    <!-- Conversations toggle button (drawer on mobile, hide/show on desktop) -->
+                    <button id="pi-sidebar-toggle" class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-1"
+                            type="button"
+                            title="{{ _('Toggle conversation sidebar') }}"
+                            aria-label="{{ _('Toggle conversations sidebar') }}">
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M2.5 12a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5z"/></svg>
+                        <span>{{ _('Conversations') }}</span>
+                    </button>
+                    <div>
+                        <div class="d-flex align-items-center gap-2">
+                            <h1 class="h6 mb-0 fw-bold">{{ _('Pi Agent') }}</h1>
+                        </div>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <button id="pi-new" class="btn btn-primary btn-sm d-inline-flex align-items-center gap-1">
+                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2z"/></svg>
+                        <span>{{ _('New chat') }}</span>
+                    </button>
+                    <button id="pi-settings-toggle" class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#pi-settings-collapse" aria-expanded="false" aria-controls="pi-settings-collapse" title="{{ _('Toggle Model & System Settings') }}">
+                        <span>{{ _('⚙️ Settings') }}</span>
+                    </button>
+                    <button id="pi-archive" class="btn btn-outline-secondary btn-sm" title="{{ _('Save archive snapshot') }}">
+                        <span>{{ _('💾 Snapshot') }}</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="row g-2 pi-main-row">
+        <!-- Sidebar: Offcanvas on mobile, collapsible column on desktop -->
+        <aside id="pi-sidebar-drawer" class="offcanvas-md offcanvas-start col-md-auto" tabindex="-1" aria-labelledby="pi-history-label">
+            <div class="card h-100 border shadow-xs">
+                <div class="card-header bg-white border-bottom p-2 d-flex justify-content-between align-items-center">
+                    <h2 id="pi-history-label" class="h6 mb-0 fw-bold d-flex align-items-center gap-2">
+                        <span>{{ _('💬 Conversations') }}</span>
+                    </h2>
+                    <div class="d-flex align-items-center gap-1">
+                        <!-- Hide button for desktop -->
+                        <button type="button" id="pi-sidebar-hide-desktop" class="btn btn-sm btn-outline-secondary d-none d-md-inline-flex align-items-center py-0 px-1" title="{{ _('Hide conversations') }}" aria-label="{{ _('Hide conversations') }}">
+                            <span class="small">{{ _('Hide «') }}</span>
+                        </button>
+                        <!-- Close button for mobile offcanvas -->
+                        <button type="button" class="btn-close d-md-none" data-bs-dismiss="offcanvas" data-bs-target="#pi-sidebar-drawer" aria-label="{{ _('Close') }}"></button>
+                    </div>
+                </div>
+                <div class="card-body p-2 d-flex flex-column">
+                    <div class="position-relative mb-2">
+                        <label for="pi-search" class="visually-hidden">{{ _('Search conversation history') }}</label>
+                        <input id="pi-search" type="search" class="form-control form-control-sm ps-4" placeholder="{{ _('Search conversations…') }}">
+                        <span class="position-absolute top-50 start-0 translate-middle-y ms-2 text-muted small" style="pointer-events:none;">🔍</span>
+                    </div>
+                    <div id="pi-history" class="pi-history flex-grow-1" aria-label="{{ _('Conversation history') }}"></div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Column -->
+        <main id="pi-main-content" class="col d-flex flex-column">
+            <!-- Collapsible Settings Panel -->
+            <div id="pi-settings-collapse" class="collapse mb-3">
+                <div class="card border shadow-xs bg-light">
+                    <div class="card-header py-2 px-3 bg-white border-bottom d-flex justify-content-between align-items-center">
+                        <span class="fw-semibold small">{{ _('⚙️ Model & Prompt Settings') }}</span>
+                        <button type="button" class="btn-close btn-sm" data-bs-toggle="collapse" data-bs-target="#pi-settings-collapse" aria-label="{{ _('Close') }}"></button>
+                    </div>
+                    <div class="card-body p-3">
+                        <div class="row g-2">
+                            <div class="col-sm-6 col-lg-5">
+                                <label for="pi-model" class="form-label small fw-semibold text-secondary">{{ _('Model') }}</label>
+                                <select id="pi-model" class="form-select form-select-sm">
+                                    <option value="">{{ _('Use Pi default') }}</option>
+                                </select>
+                            </div>
+                            <div class="col-sm-6 col-lg-3">
+                                <label for="pi-thinking" class="form-label small fw-semibold text-secondary">{{ _('Thinking') }}</label>
+                                <select id="pi-thinking" class="form-select form-select-sm">
+                                    <option value="">{{ _('Use Pi default') }}</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-lg-4">
+                                <label for="pi-prompt" class="form-label small fw-semibold text-secondary">{{ _('System prompt') }}</label>
+                                <select id="pi-prompt" class="form-select form-select-sm">
+                                    <option value="general" selected>{{ _('General assistant') }}</option>
+                                    <option value="coding">{{ _('Coding assistant') }}</option>
+                                    <option value="office">{{ _('Office assistant') }}</option>
+                                    <option value="pi">{{ _('Pi default') }}</option>
+                                    {% for key, preset in presets.items() if preset.custom %}
+                                    <option value="{{ key }}">{{ preset.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-12 mt-2 pt-2 border-top">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="pi-settings-toggle-tools">
+                                    <label class="form-check-label small text-secondary fw-semibold user-select-none" for="pi-settings-toggle-tools">{{ _('Display tool execution cards in conversation') }}</label>
+                                </div>
+                            </div>
+                        </div>
+                        <details class="mt-3">
+                            <summary class="small text-secondary fw-semibold user-select-none" style="cursor: pointer;">{{ _('View system instructions') }}</summary>
+                            <pre id="pi-prompt-text" class="small mt-2 p-2 bg-white border rounded text-wrap" style="max-height: 150px; overflow-y: auto;">{{ prompt }}</pre>
+                            <small id="pi-prompt-note" class="text-muted d-block mt-1">{{ _('Appended to Pi’s native instructions. Choose the preset before the first message.') }}</small>
+                        </details>
+                        <details class="mt-3">
+                            <summary class="small text-secondary fw-semibold">{{ _('Create a custom prompt') }}</summary>
+                            <form id="pi-custom-prompt-form" class="mt-2">
+                                <label for="pi-custom-prompt-name" class="form-label small">{{ _('Prompt name') }}</label>
+                                <input id="pi-custom-prompt-name" class="form-control form-control-sm mb-2" required maxlength="80">
+                                <label for="pi-custom-prompt-text" class="form-label small">{{ _('Prompt instructions') }}</label>
+                                <textarea id="pi-custom-prompt-text" class="form-control form-control-sm mb-2" rows="5" required maxlength="32000"></textarea>
+                                <button id="pi-save-prompt" type="submit" class="btn btn-sm btn-outline-primary">{{ _('Save prompt') }}</button>
+                                <small class="text-muted d-block mt-2">{{ _('Custom prompts are private to your account. Choose one before the first message.') }}</small>
+                                <div id="pi-custom-prompt-status" class="small mt-2" role="status"></div>
+                            </form>
+                        </details>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Keep conversation metadata for state updates without a visible panel. -->
+            <div id="pi-conversation-info" class="d-none" hidden>
+                <div>
+                    <div class="d-flex align-items-center gap-2 min-width-0">
+                        <!-- Desktop expand sidebar button (shown only when desktop sidebar is hidden) -->
+                        <button type="button" id="pi-sidebar-show-desktop" class="btn btn-sm btn-outline-secondary py-0 px-2 d-none align-items-center gap-1" title="{{ _('Show conversations sidebar') }}">
+                            <svg width="13" height="13" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M3.5 15a.5.5 0 0 0 .5-.5v-13a.5.5 0 0 0-1 0v13a.5.5 0 0 0 .5.5zM6 8a.5.5 0 0 0 .5-.5H12.293l-2.147-2.146a.5.5 0 0 0 .708-.708l3 3a.5.5 0 0 0 0 .708l-3 3a.5.5 0 0 0-.708-.708L12.293 8.5H6.5A.5.5 0 0 0 6 8z"/></svg>
+                            <span>{{ _('Sidebar') }}</span>
+                        </button>
+                        <span class="badge bg-light text-primary border rounded-pill">{{ _('Chat') }}</span>
+                        <h3 id="pi-title" class="h6 mb-0 text-truncate fw-semibold" style="max-width: 320px;">{{ _('New conversation') }}</h3>
+                    </div>
+                    <!-- Controls: Model Badges + Tool Display Toggle -->
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="d-flex align-items-center gap-1 small text-muted">
+                            <span id="pi-badge-model" class="badge bg-light text-dark border">{{ _('Default') }}</span>
+                            <span id="pi-badge-thinking" class="badge bg-light text-dark border d-none d-sm-inline">{{ _('Thinking: Default') }}</span>
+                        </div>
+                        <!-- Toggle tool display switch -->
+                        <div class="form-check form-switch mb-0 d-inline-flex align-items-center gap-1 border-start ps-2" title="{{ _('Show or hide tool execution details in conversation') }}">
+                            <input class="form-check-input mt-0" type="checkbox" role="switch" id="pi-toggle-tools">
+                            <label class="form-check-label small user-select-none text-muted" for="pi-toggle-tools">{{ _('Tools') }}</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Stream / Message Box -->
+            <div id="pi-messages" class="card border shadow-xs p-3 mb-2 flex-grow-1" role="log" aria-label="{{ _('Conversation') }}" aria-live="polite">
+            </div>
+
+            <!-- Status line with animated indicator -->
+            <div class="d-flex align-items-center justify-content-between mb-2 px-1">
+                <div class="d-flex align-items-center gap-2 small text-muted" role="status">
+                    <span id="pi-status-indicator" class="pi-pulse-dot"></span>
+                    <span id="pi-status">{{ _('Loading Pi settings…') }}</span>
+                </div>
+            </div>
+
+            <!-- Form / Message Input Composer -->
+            <form id="pi-form" class="card border shadow-xs p-2 mb-3">
+                <label for="pi-input" class="visually-hidden">{{ _('Message') }}</label>
+                <!-- Attachments preview pills -->
+                <div id="pi-attachments" class="d-flex flex-wrap gap-1 mb-2 px-1" aria-label="{{ _('Attachments for next message') }}"></div>
+
+                <div class="position-relative">
+                    <textarea id="pi-input" class="form-control border-0 p-2" rows="2" maxlength="32000" placeholder="{{ _('Ask Pi a question or describe what to do with your files…') }}"></textarea>
+                </div>
+
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2 border-top px-1">
+                    <div class="d-flex align-items-center gap-1">
+                        <label class="btn btn-sm btn-outline-secondary mb-0 d-inline-flex align-items-center gap-1" for="pi-upload" title="{{ _('Attach files from your device') }}">
+                            <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M4.5 3a2.5 2.5 0 0 1 5 0v9a1.5 1.5 0 0 1-3 0V5a.5.5 0 0 1 1 0v7a.5.5 0 0 0 1 0V3a1.5 1.5 0 1 0-3 0v9a2.5 2.5 0 0 0 5 0V5a.5.5 0 0 1 1 0v7a3.5 3.5 0 1 1-7 0V3z"/></svg>
+                            <span class="d-none d-sm-inline">{{ _('Attach') }}</span>
+                        </label>
+                        <input id="pi-upload" type="file" multiple class="visually-hidden" aria-label="{{ _('Attach files') }}">
+                        <button id="pi-files-toggle-btn" class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#pi-files-collapse" aria-expanded="false" aria-controls="pi-files-collapse" title="{{ _('View files for this conversation') }}">
+                            📁 <span id="pi-files-count" class="badge bg-secondary rounded-pill">0</span>
+                        </button>
+                        <span class="small text-muted ms-1 d-none d-md-inline" style="font-size: 0.75rem;">{{ _('Up to 20 files ·') }} {{ upload_limit_mb }} {{ _('MB') }}</span>
+                    </div>
+
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="small text-muted d-none d-lg-inline">{{ _('⌘+Enter / Ctrl+Enter to send') }}</span>
+                        <button id="pi-stop" class="btn btn-sm btn-outline-danger d-inline-flex align-items-center gap-1" type="button" disabled>
+                            <span>⏹</span> <span>{{ _('Stop') }}</span>
+                        </button>
+                        <button id="pi-send" class="btn btn-sm btn-primary px-3 d-inline-flex align-items-center gap-1" type="submit" title="{{ _('Send (⌘+Enter / Ctrl+Enter)') }}">
+                            <span>{{ _('Send') }}</span>
+                            <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M15.854.146a.5.5 0 0 1 .11.54l-5.8 14a.5.5 0 0 1-.928-.008L6.46 8.54.146 5.772a.5.5 0 0 1 .008-.928l14-5.8a.5.5 0 0 1 .54.111zM6.637 9.07l2.806 6.08 4.544-10.965-7.35 4.885zm4.886-7.35L2.84 6.275l6.08 2.806 2.603-4.36z"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </form>
+
+            <!-- Collapsible Conversation Files Section -->
+            <div id="pi-files-collapse" class="collapse mb-3">
+                <div class="card border shadow-xs bg-light">
+                    <div class="card-header py-2 px-3 bg-white border-bottom d-flex justify-content-between align-items-center">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="fw-semibold small">{{ _('📁 Conversation Files') }}</span>
+                            <span class="small text-muted">{{ _('(Uploads & Outputs)') }}</span>
+                        </div>
+                        <button type="button" class="btn-close btn-sm" data-bs-toggle="collapse" data-bs-target="#pi-files-collapse" aria-label="{{ _('Close') }}"></button>
+                    </div>
+                    <div class="card-body p-3">
+                        <p class="small text-muted mb-2">{{ _('Download uploads and generated outputs. Click "Attach" on an uploaded file to reference it in your next message.') }}</p>
+                        <div id="pi-files" class="small">{{ _('No files yet.') }}</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+
+<script id="pi-presets" type="application/json">{{ presets|tojson }}</script>
+<script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/purify.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pi-agent.js') }}" defer></script>
+{% endblock %}

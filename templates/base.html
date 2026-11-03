@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="{{ locale() }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ _('My Blog') }}{% endblock %}</title>
+    <script id="i18n-data" type="application/json">{{ i18n_data|tojson }}</script>
+    <script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <style>
+        :root {
+            --app-bg: #f8fafc;
+            --app-card-bg: #ffffff;
+            --app-border: #e2e8f0;
+            --app-border-hover: #cbd5e1;
+            --app-primary: #2563eb;
+            --app-primary-hover: #1d4ed8;
+            --app-primary-gradient: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            --app-surface-gradient: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            --app-text: #0f172a;
+            --app-text-secondary: #475569;
+            --app-text-muted: #64748b;
+            --app-radius-sm: 8px;
+            --app-radius-md: 12px;
+            --app-radius-lg: 16px;
+            --app-radius-xl: 20px;
+        }
+        body {
+            background-color: var(--app-bg);
+            color: var(--app-text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        .main-content-wrap {
+            flex: 1 0 auto;
+        }
+        /* Cards */
+        .card {
+            border: 1px solid var(--app-border);
+            border-radius: var(--app-radius-lg);
+            background-color: var(--app-card-bg);
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+        }
+        .card-header {
+            background-color: transparent;
+            border-bottom: 1px solid var(--app-border);
+            padding: 1.15rem 1.35rem;
+        }
+        .shadow-xs {
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+        }
+        .shadow-sm {
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06) !important;
+        }
+        .shadow-md {
+            box-shadow: 0 8px 24px -4px rgba(15, 23, 42, 0.08) !important;
+        }
+        .hover-lift {
+            transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+        }
+        .hover-lift:hover {
+            transform: translateY(-3px);
+            border-color: var(--app-border-hover);
+            box-shadow: 0 12px 28px -4px rgba(15, 23, 42, 0.09) !important;
+        }
+        /* Buttons */
+        .btn {
+            border-radius: 10px;
+            font-weight: 500;
+            padding: 0.55rem 1.15rem;
+            transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.35rem;
+        }
+        .btn-primary {
+            background: var(--app-primary-gradient);
+            border: 1px solid #1d4ed8;
+            box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+        }
+        .btn-primary:hover, .btn-primary:focus {
+            background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+            border-color: #1e40af;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+            transform: translateY(-1px);
+        }
+        .btn-outline-primary {
+            border-color: #93c5fd;
+            color: #2563eb;
+        }
+        .btn-outline-primary:hover {
+            background-color: #eff6ff;
+            border-color: #3b82f6;
+            color: #1d4ed8;
+        }
+        .btn-outline-secondary {
+            border-color: var(--app-border);
+            color: var(--app-text-secondary);
+        }
+        .btn-outline-secondary:hover {
+            background-color: #f1f5f9;
+            border-color: var(--app-border-hover);
+            color: var(--app-text);
+        }
+        /* Form Inputs */
+        .form-control, .form-select {
+            border: 1px solid var(--app-border);
+            border-radius: 10px;
+            padding: 0.65rem 0.95rem;
+            font-size: 0.95rem;
+            background-color: #ffffff;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+        .form-control:focus, .form-select:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+            outline: none;
+        }
+        /* Badges */
+        .badge {
+            border-radius: 8px;
+            font-weight: 500;
+            padding: 0.35rem 0.65rem;
+            letter-spacing: 0.01em;
+        }
+        /* Glassmorphism Navbar */
+        .navbar {
+            background: rgba(15, 23, 42, 0.96) !important;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+        }
+        .navbar-brand {
+            font-size: 1.18rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+        .nav-link {
+            font-size: 0.92rem;
+            font-weight: 500;
+            color: #cbd5e1 !important;
+            padding: 0.45rem 0.85rem !important;
+            border-radius: 8px;
+            transition: all 0.15s ease;
+        }
+        .nav-link:hover {
+            color: #ffffff !important;
+            background: rgba(255, 255, 255, 0.08);
+        }
+        .lang-select-wrap {
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            overflow: hidden;
+            display: inline-flex;
+            align-items: center;
+        }
+        .lang-select-wrap select {
+            background: transparent !important;
+            color: #e2e8f0 !important;
+            border: 0 !important;
+            font-size: 0.82rem;
+            padding: 0.3rem 0.6rem;
+            cursor: pointer;
+        }
+        .lang-select-wrap select option {
+            background: #1e293b;
+            color: #ffffff;
+        }
+        /* Hero Banner */
+        .hero-banner {
+            background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%);
+            border: 1px solid #e2e8f0;
+            border-radius: var(--app-radius-xl);
+            position: relative;
+            overflow: hidden;
+        }
+        .hero-banner::before {
+            content: '';
+            position: absolute;
+            top: -50px;
+            right: -50px;
+            width: 220px;
+            height: 220px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.12) 0%, rgba(59, 130, 246, 0) 70%);
+            pointer-events: none;
+        }
+        /* Footer */
+        .app-footer {
+            margin-top: auto;
+            border-top: 1px solid var(--app-border);
+            background: #ffffff;
+            color: var(--app-text-muted);
+            padding: 1.75rem 0;
+            font-size: 0.88rem;
+        }
+        /* Mobile Ergonomics */
+        @media (max-width: 767.98px) {
+            .container {
+                padding-left: 1rem !important;
+                padding-right: 1rem !important;
+            }
+            .hero-banner {
+                padding: 1.5rem 1.25rem !important;
+                border-radius: 16px;
+            }
+            .btn {
+                min-height: 44px;
+                font-size: 0.95rem;
+            }
+            .btn-sm {
+                min-height: 36px;
+                font-size: 0.85rem;
+            }
+            .navbar-nav {
+                padding: 0.75rem 0;
+            }
+            .navbar-nav .nav-link {
+                padding: 0.65rem 0.85rem !important;
+                font-size: 1rem;
+            }
+            .card {
+                border-radius: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark sticky-top">
+        <div class="container">
+            <a class="navbar-brand d-inline-flex align-items-center gap-2" href="{{ url_for('pi_agent.page') }}">
+                <span class="badge bg-primary rounded-pill px-2 py-1 fs-6">📝</span>
+                <span>{{ _('My Blog') }}</span>
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarMain" aria-controls="navbarMain" aria-expanded="false" aria-label="{{ _('Toggle navigation') }}">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarMain">
+                <div class="navbar-nav me-auto">
+                    <a class="nav-link" href="{{ url_for('pi_agent.page') }}">{{ _('Pi Agent') }}</a>
+                    <a class="nav-link" href="{{ url_for('main.index') }}">{{ _('Posts') }}</a>
+                    <a class="nav-link" href="{{ url_for('moments.moments') }}">{{ _('Secret Moments') }}</a>
+                    <a class="nav-link" href="{{ url_for('ai_sessions.sessions_list') }}">{{ _('AI Sessions') }}</a>
+                </div>
+                <form action="{{ url_for('i18n_language') }}" method="post" class="d-flex align-items-center gap-2 me-3 my-2 my-lg-0">
+                    <input type="hidden" name="csrf_token" value="{{ language_csrf }}">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                    <label for="language-choice" class="visually-hidden">{{ _('Language') }}</label>
+                    <div class="lang-select-wrap">
+                        <span class="ps-2 pe-1 text-light small">🌐</span>
+                        <select id="language-choice" name="language" aria-label="{{ _('Language') }}" onchange="this.form.requestSubmit()">
+                            <option value="en" {% if locale() == 'en' %}selected{% endif %}>English</option>
+                            <option value="zh-CN" {% if locale() == 'zh-CN' %}selected{% endif %}>简体中文</option>
+                        </select>
+                    </div>
+                </form>
+                <div class="navbar-nav align-items-lg-center">
+                    {% if current_user.is_authenticated %}
+                        <span class="navbar-text me-lg-3 small text-light">{{ _('Hello, {username}!', username=current_user.username) }}</span>
+                        <a class="nav-link btn btn-sm btn-outline-light px-3 py-1 my-1 my-lg-0" href="{{ url_for('auth.logout') }}">{{ _('Logout') }}</a>
+                    {% else %}
+                        <a class="nav-link" href="{{ url_for('auth.login') }}">{{ _('Login') }}</a>
+                        <a class="nav-link btn btn-sm btn-primary text-white px-3 py-1 ms-lg-2 my-1 my-lg-0" href="{{ url_for('auth.register') }}">{{ _('Register') }}</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="main-content-wrap">
+        <div class="container mt-4 px-3 px-md-4 mb-5">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show rounded-3 shadow-xs border">
+                            {{ _(message) }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ _('AI Sessions') }}{% endblock %}
+
+{% block content %}
+<div class="mx-auto" style="max-width: 860px;">
+    <!-- Simple Header Bar -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4 pb-2 border-bottom">
+        <div>
+            <h1 class="h4 fw-bold text-dark mb-0">{{ _('AI Chat Sessions') }}</h1>
+        </div>
+        {% if current_user.is_authenticated %}
+        <div>
+            <a href="{{ url_for('pi_agent.page') }}" class="btn btn-primary btn-sm px-3 shadow-xs">
+                <span>⚡</span>
+                <span>{{ _('Pi Agent') }}</span>
+            </a>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if not sessions %}
+        <div class="card border shadow-xs rounded-3 p-5 text-center my-4 bg-white">
+            <div class="fs-1 mb-2">💬</div>
+            <h2 class="h5 fw-bold text-dark mb-1">{{ _('No sessions yet.') }}</h2>
+            <p class="text-muted small mb-3">{{ _('New turns will appear here as they are synced.') }}</p>
+            {% if current_user.is_authenticated %}
+            <div>
+                <a href="{{ url_for('pi_agent.page') }}" class="btn btn-primary btn-sm px-3 shadow-xs">
+                    <span>⚡</span>
+                    <span>{{ _('Pi Agent') }}</span>
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    {% else %}
+        <div class="row row-cols-1 row-cols-md-2 g-3">
+            {% for session in sessions %}
+            <div class="col">
+                <a href="{{ url_for('ai_sessions.session_detail', session_id=session.session_id) }}" class="text-decoration-none text-dark">
+                    <div class="card h-100 hover-lift border shadow-xs rounded-3 bg-white p-3 p-md-4">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1 small text-truncate" style="max-width: 180px;">
+                                🤖 {{ session.model_name or _('Unknown Model') }}
+                            </span>
+                            <span class="badge bg-light text-secondary border px-2 py-1 small">
+                                💭 {{ session.message_count }}
+                            </span>
+                        </div>
+
+                        <h2 class="h6 fw-bold text-dark text-truncate mb-3 mt-1" title="{{ session.title or _('Untitled Session') }}">
+                            {{ session.title or _('Untitled Session') }}
+                        </h2>
+
+                        <div class="mt-auto pt-2 border-top text-muted small" style="font-size: 0.78rem;">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span>📅 {{ _('Created:') }}</span>
+                                <span>{{ session.created_at[:10] if session.created_at else '' }}</span>
+                            </div>
+                            {% if session.updated_at %}
+                            <div class="d-flex justify-content-between align-items-center mt-1">
+                                <span>🕒 {{ _('Updated:') }}</span>
+                                <span>{{ session.updated_at[:16] }}</span>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </a>
+            </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

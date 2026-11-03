@@ -1,0 +1,500 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ session.title or _('AI Session') }}{% endblock %}
+
+{% block content %}
+<div class="chat-page-wrapper">
+    <!-- Top Bar / Navigation -->
+    <div class="chat-header card border-0 shadow-sm mb-4">
+        <div class="card-body p-3 p-md-4">
+            <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3">
+                <div class="min-width-0">
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <span class="session-icon-badge">💬</span>
+                        <h3 class="mb-0 text-break session-title">{{ session.title or _('Untitled Session') }}</h3>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mt-2 text-muted small">
+                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1">
+                            🤖 {{ session.model_name or _('Unknown Model') }}
+                        </span>
+                        {% if session.created_at %}
+                            <span class="badge bg-light text-secondary border px-2 py-1">
+                                📅 {{ session.created_at[:19] }}
+                            </span>
+                        {% endif %}
+                        <span class="badge bg-light text-secondary border px-2 py-1">
+                            💭 {{ _('{count} message', count=session.messages|length) if session.messages|length == 1 else _('{count} messages', count=session.messages|length) }}
+                        </span>
+                    </div>
+                </div>
+                <a href="{{ url_for('ai_sessions.sessions_list') }}" class="btn btn-outline-secondary btn-sm px-3 flex-shrink-0 d-inline-flex align-items-center gap-1 rounded-pill">
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/>
+                    </svg>
+                    {{ _('Back to Sessions') }}
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chat Messages Container -->
+    <div class="chat-container card border shadow-sm mb-5">
+        <div class="card-body p-3 p-md-4 chat-body">
+            {% for msg in session.messages %}
+                {% set is_system = msg.role == 'system' %}
+                {% set is_user = msg.role == 'user' %}
+                {% set is_assistant = msg.role == 'assistant' %}
+                {% set is_collapsible = is_system or msg.message_type in ['context_injection', 'compacted_memory', 'search_results'] %}
+
+                <div class="message-row mb-4 {% if is_user %}message-row-user{% elif is_collapsible %}message-row-system{% else %}message-row-assistant{% endif %}">
+                    {% if is_collapsible %}
+                        <!-- Collapsible System / Context Pill -->
+                        <div class="system-bubble-wrapper mx-auto">
+                            <div class="card border system-card shadow-xs">
+                                <button class="btn btn-sm system-toggle-btn w-100 text-start d-flex justify-content-between align-items-center py-2 px-3"
+                                        type="button"
+                                        data-bs-toggle="collapse"
+                                        data-bs-target="#msg-{{ msg.message_id }}"
+                                        aria-expanded="false"
+                                        aria-controls="msg-{{ msg.message_id }}">
+                                    <span class="d-inline-flex align-items-center gap-2 small text-secondary">
+                                        <span class="system-icon">⚙️</span>
+                                        <strong>{{ _(msg.role|capitalize) }}</strong>
+                                        <span class="badge bg-light text-muted border text-capitalize">{{ _((msg.message_type or 'system prompt')|replace('_', ' ')) }}</span>
+                                    </span>
+                                    <svg class="chevron-icon text-muted" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                                        <path fill-rule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/>
+                                    </svg>
+                                </button>
+                                <div class="collapse" id="msg-{{ msg.message_id }}">
+                                    <div class="card-body border-top p-3 bg-light">
+                                        <pre class="system-pre mb-0 small text-wrap">{{ msg.display_content }}</pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    {% elif is_user %}
+                        <!-- User Message -->
+                        <div class="bubble-wrapper user-wrapper text-end">
+                            <div class="message-meta text-muted small mb-1 me-2">
+                                <span class="fw-semibold">{{ _('You') }}</span>
+                                {% if msg.created_at %}
+                                    <span class="text-secondary opacity-75 ms-1">{{ msg.created_at[11:16] }}</span>
+                                {% endif %}
+                            </div>
+                            <div class="user-bubble text-start shadow-sm">
+                                <div class="message-content markdown-body user-markdown">
+                                    <textarea class="raw-markdown d-none">{{ msg.display_content }}</textarea>
+                                    <noscript><div class="white-space-pre-wrap">{{ msg.display_content }}</div></noscript>
+                                </div>
+                            </div>
+                        </div>
+
+                    {% elif is_assistant %}
+                        <!-- Assistant Message -->
+                        <div class="bubble-wrapper assistant-wrapper text-start">
+                            <div class="message-meta text-muted small mb-1 ms-2 d-flex align-items-center gap-2">
+                                <span class="avatar-circle-sm bg-primary text-white">{{ _('AI') }}</span>
+                                <span class="fw-semibold text-dark">{{ session.model_name or _('Assistant') }}</span>
+                                {% if msg.created_at %}
+                                    <span class="text-secondary opacity-75">{{ msg.created_at[11:16] }}</span>
+                                {% endif %}
+                            </div>
+                            <div class="assistant-bubble shadow-sm border">
+                                <div class="message-content markdown-body assistant-markdown">
+                                    <textarea class="raw-markdown d-none">{{ msg.display_content }}</textarea>
+                                    <noscript><div class="white-space-pre-wrap">{{ msg.display_content }}</div></noscript>
+                                </div>
+
+                                {% if msg.sources and msg.sources|length > 0 %}
+                                    <div class="sources-box mt-3 pt-2 border-top">
+                                        <div class="small fw-semibold text-muted mb-1 d-flex align-items-center gap-1">
+                                            <span>{{ _('📚 Sources & References') }}</span>
+                                        </div>
+                                        <div class="d-flex flex-wrap gap-2 mt-1">
+                                            {% for src in msg.sources %}
+                                                {% if src is mapping %}
+                                                    <a href="{{ src.url or '#' }}" target="_blank" rel="noopener noreferrer" class="badge bg-light text-primary text-decoration-none border text-truncate py-1 px-2" style="max-width: 280px;" title="{{ src.title or src.url }}">
+                                                        🔗 {{ src.title or src.url }}
+                                                    </a>
+                                                {% else %}
+                                                    <span class="badge bg-light text-secondary border py-1 px-2">{{ src }}</span>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                    {% else %}
+                        <!-- Other Roles -->
+                        <div class="bubble-wrapper other-wrapper text-start">
+                            <div class="message-meta text-muted small mb-1 ms-2">
+                                <span class="fw-semibold">{{ _(msg.role|capitalize) }}</span>
+                            </div>
+                            <div class="other-bubble shadow-sm border bg-light">
+                                <div class="message-content markdown-body">
+                                    <textarea class="raw-markdown d-none">{{ msg.display_content }}</textarea>
+                                    <noscript><div class="white-space-pre-wrap">{{ msg.display_content }}</div></noscript>
+                                </div>
+                            </div>
+                        </div>
+                    {% endif %}
+                </div>
+            {% endfor %}
+
+            {% if not session.messages %}
+                <div class="empty-chat-placeholder text-center text-muted my-5 py-4">
+                    <div class="fs-1 mb-2">💬</div>
+                    <h5>{{ _('No messages in this session yet') }}</h5>
+                    <p class="text-muted small">{{ _('New turns will appear here as they are synced.') }}</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Bundled Markdown Parser & Sanitizer -->
+<script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/purify.min.js') }}"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    // 1. Configure marked
+    if (typeof marked !== 'undefined') {
+        marked.setOptions({
+            gfm: true,
+            breaks: true,
+            pedantic: false
+        });
+    }
+
+    // 2. Configure DOMPurify to open links in new tab
+    if (typeof DOMPurify !== 'undefined') {
+        DOMPurify.addHook('afterSanitizeAttributes', function (node) {
+            if (node.tagName === 'A') {
+                node.setAttribute('target', '_blank');
+                node.setAttribute('rel', 'noopener noreferrer');
+            }
+        });
+    }
+
+    // 3. Render all markdown textareas
+    document.querySelectorAll('.raw-markdown').forEach(function (textarea) {
+        var rawText = textarea.value || '';
+        var parent = textarea.parentElement;
+
+        try {
+            var rawHtml = marked.parse(rawText);
+            var cleanHtml = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(rawHtml) : rawHtml;
+
+            var renderedDiv = document.createElement('div');
+            renderedDiv.className = 'rendered-markdown';
+            renderedDiv.innerHTML = cleanHtml;
+            parent.appendChild(renderedDiv);
+        } catch (err) {
+            console.error('Markdown rendering error:', err);
+            var fallbackDiv = document.createElement('div');
+            fallbackDiv.className = 'white-space-pre-wrap';
+            fallbackDiv.textContent = rawText;
+            parent.appendChild(fallbackDiv);
+        }
+    });
+
+    // 4. Add "Copy" button to code blocks
+    document.querySelectorAll('.markdown-body pre').forEach(function (preBlock) {
+        var copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-code-btn';
+        copyBtn.type = 'button';
+        copyBtn.textContent = window.AppI18n.t('Copy');
+
+        copyBtn.addEventListener('click', function () {
+            var codeEl = preBlock.querySelector('code') || preBlock;
+            var textToCopy = codeEl.innerText || '';
+            navigator.clipboard.writeText(textToCopy).then(function () {
+                copyBtn.textContent = window.AppI18n.t('✓ Copied!');
+                copyBtn.classList.add('copied');
+                setTimeout(function () {
+                    copyBtn.textContent = window.AppI18n.t('Copy');
+                    copyBtn.classList.remove('copied');
+                }, 2000);
+            }).catch(function () {
+                copyBtn.textContent = window.AppI18n.t('Error');
+            });
+        });
+
+        preBlock.style.position = 'relative';
+        preBlock.appendChild(copyBtn);
+    });
+
+    // 5. Wrap markdown tables in responsive container
+    document.querySelectorAll('.markdown-body table').forEach(function (tbl) {
+        var wrapper = document.createElement('div');
+        wrapper.className = 'table-responsive my-2';
+        tbl.parentNode.insertBefore(wrapper, tbl);
+        wrapper.appendChild(tbl);
+        tbl.classList.add('table', 'table-sm', 'table-bordered', 'table-hover', 'mb-0');
+    });
+});
+</script>
+
+<style>
+/* Page Layout */
+.chat-page-wrapper {
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.session-icon-badge {
+    font-size: 1.5rem;
+    line-height: 1;
+}
+
+.session-title {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.chat-container {
+    background-color: #f8fafc;
+    border-color: #e2e8f0 !important;
+    border-radius: 16px;
+    overflow: hidden;
+}
+
+.chat-body {
+    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    min-height: 400px;
+}
+
+/* Row alignments */
+.message-row-user {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.message-row-assistant {
+    display: flex;
+    justify-content: flex-start;
+}
+
+.message-row-system {
+    display: flex;
+    justify-content: center;
+}
+
+.bubble-wrapper {
+    max-width: 82%;
+}
+
+@media (max-width: 767.98px) {
+    .bubble-wrapper {
+        max-width: 92%;
+    }
+}
+
+/* User Message Bubble */
+.user-bubble {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: #ffffff;
+    border-radius: 20px 20px 4px 20px;
+    padding: 12px 18px;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+    word-break: break-word;
+}
+
+/* Assistant Message Bubble */
+.assistant-bubble {
+    background: #ffffff;
+    color: #0f172a;
+    border: 1px solid #e2e8f0;
+    border-radius: 20px 20px 20px 4px;
+    padding: 16px 20px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+    word-break: break-word;
+}
+
+.avatar-circle-sm {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    font-weight: 700;
+}
+
+/* System Message Card */
+.system-bubble-wrapper {
+    width: 100%;
+    max-width: 580px;
+}
+
+.system-card {
+    background: #ffffff;
+    border-radius: 12px;
+    border-color: #e2e8f0 !important;
+}
+
+.system-toggle-btn {
+    text-decoration: none;
+    border: none;
+    background: transparent;
+    transition: background-color 0.15s ease;
+}
+
+.system-toggle-btn:hover {
+    background-color: #f8fafc;
+}
+
+.chevron-icon {
+    transition: transform 0.2s ease-in-out;
+}
+
+.system-toggle-btn[aria-expanded="true"] .chevron-icon {
+    transform: rotate(180deg);
+}
+
+.system-pre {
+    background: #0f172a;
+    color: #94a3b8;
+    padding: 12px;
+    border-radius: 8px;
+    max-height: 280px;
+    overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+/* Markdown Typography */
+.markdown-body {
+    font-size: 0.96rem;
+    line-height: 1.65;
+}
+
+.markdown-body p {
+    margin-bottom: 0.75rem;
+}
+
+.markdown-body p:last-child {
+    margin-bottom: 0;
+}
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5 {
+    font-weight: 700;
+    color: #0f172a;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.markdown-body h1 { font-size: 1.35rem; }
+.markdown-body h2 { font-size: 1.2rem; }
+.markdown-body h3 { font-size: 1.05rem; }
+
+.markdown-body ul, .markdown-body ol {
+    padding-left: 1.4rem;
+    margin-bottom: 0.75rem;
+}
+
+.markdown-body li {
+    margin-bottom: 0.25rem;
+}
+
+.markdown-body blockquote {
+    border-left: 4px solid #3b82f6;
+    padding: 8px 14px;
+    margin: 0.8rem 0;
+    background: #f8fafc;
+    border-radius: 0 8px 8px 0;
+    color: #475569;
+}
+
+/* Inline Code */
+.assistant-markdown :not(pre) > code {
+    background-color: #f1f5f9;
+    color: #0f172a;
+    padding: 0.2em 0.45em;
+    border-radius: 6px;
+    font-size: 0.875em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    border: 1px solid #e2e8f0;
+}
+
+.user-markdown {
+    color: #ffffff;
+}
+
+.user-markdown :not(pre) > code {
+    background-color: rgba(255, 255, 255, 0.22);
+    color: #ffffff;
+    padding: 0.2em 0.45em;
+    border-radius: 6px;
+    font-size: 0.875em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.user-markdown a {
+    color: #dbeafe;
+    text-decoration: underline;
+}
+
+/* Code Blocks */
+.markdown-body pre {
+    background: #0f172a !important;
+    color: #f1f5f9 !important;
+    padding: 14px 16px;
+    border-radius: 10px;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.55;
+    margin: 0.85rem 0;
+    position: relative;
+    border: 1px solid #334155;
+}
+
+.markdown-body pre code {
+    background: transparent !important;
+    color: inherit !important;
+    padding: 0 !important;
+    border: none !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Copy Code Button */
+.copy-code-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #cbd5e1;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+}
+
+.copy-code-btn:hover {
+    background: rgba(255, 255, 255, 0.25);
+    color: #ffffff;
+}
+
+.copy-code-btn.copied {
+    background: #10b981;
+    color: #ffffff;
+    border-color: #10b981;
+}
+
+.white-space-pre-wrap {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+</style>
+{% endblock %}
