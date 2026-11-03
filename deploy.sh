@@ -2,6 +2,11 @@
 set -euo pipefail
 
 # === Configuration ===
+LOCAL_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/"
+# Optional private, shell-format defaults kept outside Git.
+if [[ -f "${LOCAL_DIR}.deploy.env" ]]; then
+    source "${LOCAL_DIR}.deploy.env"
+fi
 SERVER="${DEPLOY_SERVER:?Set DEPLOY_SERVER to your SSH user@host}"
 REMOTE_DIR="${DEPLOY_DIR:-/opt/myblog_py}"
 SERVICE="${DEPLOY_SERVICE:-myblog_py.service}"
@@ -9,7 +14,6 @@ if [[ ! "$SERVICE" =~ ^[a-zA-Z0-9_.@-]+\.service$ ]]; then
     echo "Invalid DEPLOY_SERVICE" >&2
     exit 1
 fi
-LOCAL_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/"
 
 echo "📦 Syncing project to ${SERVER}:${REMOTE_DIR} ..."
 
@@ -26,8 +30,8 @@ rsync -az --itemize-changes --delete \
     --exclude '.DS_Store' \
     --exclude '*.pyc' \
     --exclude '.pytest_cache/' \
-    --exclude 'venv/' \
-    --exclude '.venv/' \
+    --exclude 'venv' \
+    --exclude '.venv' \
     --exclude 'data/' \
     --exclude 'logs/' \
     --exclude '*.pid' \

@@ -346,6 +346,12 @@ included in the project.
 DEPLOY_SERVER=appuser@YOUR_SERVER bash deploy.sh
 ```
 
+For repeated deployments, copy `.deploy.env.example` to `.deploy.env` and set
+your own destination, directory, and service. `deploy.sh` loads this private file
+from the project directory; its example syntax preserves environment overrides.
+Keep `.env`, `.deploy.env`, and any `AGENTS.local.md` machine instructions local.
+They are ignored by Git. Run `bash deploy.sh` from this single checkout.
+
 The script uploads runtime files, preserves the remote `.env`, databases,
 certificates, logs, local settings, and Pi histories, and optionally restarts the
 configured systemd service. It excludes setup scripts, documentation, tests, and

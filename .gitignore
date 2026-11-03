@@ -15,6 +15,7 @@ build/
 # Virtual Environment
 venv/
 .venv/
+.venv
 
 # IDE / Editor
 .qwen/
@@ -69,6 +70,8 @@ certBlueNest/
 
 # Local deployment settings, certificates, database files, and private notes
 .deploy.env*
+!.deploy.env.example
+AGENTS.local.md
 *.duckdb*
 *.cer
 *.jks
