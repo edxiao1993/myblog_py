@@ -56,7 +56,6 @@ def login():
             login_user(user, remember=True)
             next_page = request.args.get('next')
             logger.info("User '%s' logged in successfully", username)
-            flash(_('Welcome back, {username}!', username=user.username), 'success')
             return redirect(next_page) if next_page else redirect(url_for('pi_agent.page'))
         else:
             logger.warning("Login failed for username '%s'", username)

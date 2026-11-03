@@ -81,9 +81,12 @@
   flex-direction: column;
 }
 @media (max-width: 767.98px) {
+  #pi-top-bar {
+    display: none !important;
+  }
   #pi-messages {
     min-height: 160px;
-    height: calc(100dvh - 350px);
+    height: calc(100dvh - 280px);
     padding: 0.75rem !important;
   }
 }
@@ -280,7 +283,7 @@
 
 <div id="pi-app" data-csrf="{{ csrf }}" data-upload-limit="{{ upload_limit_mb }}" class="pi-wrapper hide-tools">
     <!-- Top Header Bar -->
-    <header class="card border shadow-xs mb-2">
+    <header id="pi-top-bar" class="card border shadow-xs mb-2 d-none d-md-block">
         <div class="card-body p-2">
             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
                 <div class="d-flex align-items-center gap-2">
