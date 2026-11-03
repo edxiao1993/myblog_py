@@ -55,6 +55,5 @@
 # Local development
 
 If `AGENTS.local.md` exists, read it for private machine-specific instructions.
-Activate your own virtual environment before Python commands: `source .venv/bin/activate`.
 Keep `.env`, credentials, certificates, databases, logs, and personal notes out of Git.
 Deployment destinations must come from environment variables, never committed server details.
