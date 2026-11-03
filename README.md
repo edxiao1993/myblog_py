@@ -339,24 +339,11 @@ instructions in `deployment/README.md`. Use your own service account, virtualenv
 Pi executable, and provider login. No server address or account credentials are
 included in the project.
 
-`deploy.sh` requires `DEPLOY_SERVER` and accepts `DEPLOY_DIR` (default
-`/opt/myblog_py`) and `DEPLOY_SERVICE` (default `myblog_py.service`). For example:
-
-```sh
-DEPLOY_SERVER=appuser@YOUR_SERVER bash deploy.sh
-```
-
-For repeated deployments, copy `.deploy.env.example` to `.deploy.env` and set
-your own destination, directory, and service. `deploy.sh` loads this private file
-from the project directory; its example syntax preserves environment overrides.
-Keep `.env`, `.deploy.env`, and any `AGENTS.local.md` machine instructions local.
-They are ignored by Git. Run `bash deploy.sh` from this single checkout.
-
-The script uploads runtime files, preserves the remote `.env`, databases,
-certificates, logs, local settings, and Pi histories, and optionally restarts the
-configured systemd service. It excludes setup scripts, documentation, tests, and
-`deployment/`; copy initial setup files separately. Restarting requires the SSH
-account's systemd/sudo permissions. No passwords are stored in the script.
+`deploy.sh` is machine-specific, ignored by Git, and absent from fresh clones.
+Keep your deployment script and `.deploy.env` local. Use `.deploy.env.example`
+as a starting point for private deployment settings, adapting your own script
+as needed. Any `AGENTS.local.md` machine instructions also remain local.
+Do not commit server credentials, certificates, databases, or user data.
 
 
 ## Interface language

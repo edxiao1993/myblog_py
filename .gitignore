@@ -64,6 +64,7 @@ certBlueNest/
 .pytest_cache/
 .coverage
 .deploy.sh
+/deploy.sh
 # Diagnostic logs and inter-process rotation locks
 /logs/
 .local/
