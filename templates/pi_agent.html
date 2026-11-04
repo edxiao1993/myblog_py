@@ -81,15 +81,15 @@
   flex-direction: column;
 }
 @media (max-width: 767.98px) {
-  #pi-top-bar {
-    display: none !important;
-  }
   #pi-messages {
     min-height: 160px;
     height: calc(100dvh - 280px);
     padding: 0.75rem !important;
   }
 }
+
+/* Keep stream entries from shrinking to zero inside the scrolling flex column. */
+#pi-messages > * { flex-shrink: 0; }
 
 /* Chat Message Rows & Bubbles */
 .pi-msg-row {
@@ -218,14 +218,12 @@
 .pi-tool-card {
   border-radius: 10px;
   overflow: hidden;
-  max-width: 90%;
+  max-width: 100%;
+  min-width: 0;
 }
 .pi-tool-summary {
   cursor: pointer;
   background: #f8fafc;
-}
-.pi-tool-summary::-webkit-details-marker {
-  display: none;
 }
 .tool-output {
   max-height: 200px;
@@ -281,9 +279,9 @@
 }
 </style>
 
-<div id="pi-app" data-csrf="{{ csrf }}" data-upload-limit="{{ upload_limit_mb }}" class="pi-wrapper hide-tools">
+<div id="pi-app" data-csrf="{{ csrf }}" data-upload-limit="{{ upload_limit_mb }}" class="pi-wrapper hide-tools pi-desktop-sidebar-hidden">
     <!-- Top Header Bar -->
-    <header id="pi-top-bar" class="card border shadow-xs mb-2 d-none d-md-block">
+    <header id="pi-top-bar" class="card border shadow-xs mb-2">
         <div class="card-body p-2">
             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
                 <div class="d-flex align-items-center gap-2">
@@ -383,7 +381,7 @@
                             <div class="col-12 mt-2 pt-2 border-top">
                                 <div class="form-check form-switch">
                                     <input class="form-check-input" type="checkbox" role="switch" id="pi-settings-toggle-tools">
-                                    <label class="form-check-label small text-secondary fw-semibold user-select-none" for="pi-settings-toggle-tools">{{ _('Display tool execution cards in conversation') }}</label>
+                                    <label class="form-check-label small text-secondary fw-semibold user-select-none" for="pi-settings-toggle-tools">{{ _('Display tool execution and thinking cards in conversation') }}</label>
                                 </div>
                             </div>
                         </div>
@@ -506,5 +504,5 @@
 <script id="pi-presets" type="application/json">{{ presets|tojson }}</script>
 <script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/purify.min.js') }}"></script>
-<script src="{{ url_for('static', filename='js/pi-agent.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/pi-agent.js', v='20261104-hidden') }}" defer></script>
 {% endblock %}

@@ -52,6 +52,14 @@ class LanguageTests(unittest.TestCase):
             self.assertIn('Create a custom prompt' if language == 'en' else '创建自定义提示词', body)
             self.assertIn('Save prompt' if language == 'en' else '保存提示词', body)
 
+    def test_pi_activity_toggle_is_translated(self):
+        for language, label in [('en', 'Display tool execution and thinking cards in conversation'),
+                                ('zh-CN', '在对话中显示工具执行和思考卡片')]:
+            self.client.set_cookie('language', language)
+            body = self.client.get('/preview/pi_agent').get_data(as_text=True)
+            self.assertIn(label, body)
+            self.assertIn('pi-wrapper hide-tools pi-desktop-sidebar-hidden', body)
+
     def test_default_english_and_language_picker(self):
         body = self.client.get('/preview/login').get_data(as_text=True)
         self.assertIn('<html lang="en">', body)

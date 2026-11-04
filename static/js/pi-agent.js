@@ -6,6 +6,7 @@
   const csrf = el('app').dataset.csrf;
   const presets = JSON.parse(document.getElementById('pi-presets').textContent);
   const tools = new Map();
+  const thoughts = new Map();
   let sid = '', busy = false, streaming = false, appending = false, started = false, assistant = null;
   let sessions = [], attachments = [], chosenFiles = [], promptSnapshot = null;
   let optionModels = [], optionLevels = [];
@@ -197,6 +198,7 @@
   function resetMessages() {
     assistant = null;
     tools.clear();
+    thoughts.clear();
     el('messages').replaceChildren();
   }
 
@@ -288,28 +290,52 @@
     return (message.content || []).filter(block => block.type === 'text').map(block => block.text).join('\n');
   }
 
+  function activityCard(label, icon) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'pi-tool-card card border mb-2 shadow-xs';
+    const details = document.createElement('details');
+    details.className = 'pi-tool-details';
+    details.open = false;
+    const summary = document.createElement('summary');
+    summary.className = 'pi-tool-summary card-header py-2 px-3 small user-select-none text-break';
+    // Tool names and thinking are untrusted agent output.
+    summary.textContent = `${icon} ${label}`;
+    const cardBody = document.createElement('div');
+    cardBody.className = 'card-body p-2 bg-light border-top';
+    const body = document.createElement('pre');
+    body.className = 'tool-output mb-0 small text-wrap';
+    cardBody.append(body);
+    details.append(summary, cardBody);
+    wrapper.append(details);
+    el('messages').append(wrapper);
+    return body;
+  }
+
   function tool(id, name, text) {
     let body = tools.get(id);
     if (!body) {
-      const wrapper = document.createElement('div');
-      wrapper.className = 'pi-tool-card card border mb-2 shadow-xs';
-      const details = document.createElement('details');
-      details.className = 'pi-tool-details';
-      const summary = document.createElement('summary');
-      summary.className = 'pi-tool-summary card-header py-2 px-3 small d-flex align-items-center justify-content-between user-select-none';
-      summary.innerHTML = `<span class="d-inline-flex align-items-center gap-2"><span>⚙️</span><strong>${t("Tool:")}</strong> <code>${name || t('command')}</code></span><span class="badge bg-secondary-subtle text-secondary border">${t("Details")}</span>`;
-      const cardBody = document.createElement('div');
-      cardBody.className = 'card-body p-2 bg-light border-top';
-      body = document.createElement('pre');
-      body.className = 'tool-output mb-0 small text-wrap';
-      cardBody.append(body);
-      details.append(summary, cardBody);
-      wrapper.append(details);
-      el('messages').append(wrapper);
+      body = activityCard(name || t('command'), '⚙️');
       tools.set(id, body);
     }
     body.textContent = text;
     el('messages').scrollTop = el('messages').scrollHeight;
+  }
+
+  function thinking(index, text, append = false) {
+    let body = thoughts.get(index);
+    if (!body) {
+      body = activityCard(t('Thinking'), '🧠');
+      thoughts.set(index, body);
+    }
+    body.textContent = (append ? body.textContent : '') + text;
+    el('messages').scrollTop = el('messages').scrollHeight;
+  }
+
+  function assistantDetails(message) {
+    for (const [index, block] of (Array.isArray(message.content) ? message.content : []).entries()) {
+      if (block.type === 'thinking' && block.thinking) thinking(index, block.thinking);
+      if (block.type === 'toolCall') tool(block.id, block.name, JSON.stringify(block.arguments, null, 2));
+    }
   }
 
   function renderAttachments() {
@@ -432,9 +458,7 @@
         if (message.role === 'toolResult') tool(message.toolCallId, message.toolName, content(message));
         else if (['user', 'assistant'].includes(message.role)) {
           if (content(message)) bubble(message.role === 'user' ? 'You' : 'Assistant', content(message), message.attachments);
-          for (const block of Array.isArray(message.content) ? message.content : []) {
-            if (block.type === 'toolCall') tool(block.id, block.name, JSON.stringify(block.arguments, null, 2));
-          }
+          if (message.role === 'assistant') { thoughts.clear(); assistantDetails(message); }
         }
       }
       renderFiles(detail.files); locationForConversation(); renderHistory();
@@ -447,11 +471,17 @@
   }
 
   function event(record) {
-    if (record.type === 'message_start' && record.message?.role === 'assistant') assistant = null;
+    if (record.type === 'message_start' && record.message?.role === 'assistant') { assistant = null; thoughts.clear(); }
     if (record.type === 'message_update' && record.assistantMessageEvent?.type === 'text_delta') {
       assistant ||= bubble('Assistant', ''); render(assistant, assistant.dataset.text + record.assistantMessageEvent.delta);
     }
+    if (record.type === 'message_update') {
+      const update = record.assistantMessageEvent;
+      if (update?.type === 'thinking_delta') thinking(update.contentIndex, update.delta, true);
+      if (update?.type === 'thinking_end') thinking(update.contentIndex, update.content);
+    }
     if (record.type === 'message_end' && record.message.role === 'assistant') {
+      assistantDetails(record.message);
       const text = content(record.message);
       if (text) { assistant ||= bubble('Assistant', ''); render(assistant, text); }
       if (record.message.errorMessage) throw new Error(record.message.errorMessage);
@@ -612,7 +642,6 @@
     const t2 = document.getElementById('pi-settings-toggle-tools');
     if (t1) t1.checked = show;
     if (t2) t2.checked = show;
-    try { localStorage.setItem('pi_show_tools', String(show)); } catch (_) {}
   }
 
   const toggleTools = document.getElementById('pi-toggle-tools');
@@ -660,11 +689,9 @@
   }
 
   async function initialize() {
+    setToolsVisibility(false);
     try {
-      const savedTools = localStorage.getItem('pi_show_tools');
-      setToolsVisibility(savedTools === 'true');
-      const savedSidebar = localStorage.getItem('pi_sidebar_desktop_hidden');
-      if (savedSidebar === 'true') setDesktopSidebarHidden(true);
+      setDesktopSidebarHidden(localStorage.getItem('pi_sidebar_desktop_hidden') !== 'false');
     } catch (_) {}
 
     autoExpandInput();
