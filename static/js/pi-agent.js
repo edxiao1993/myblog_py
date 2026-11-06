@@ -7,6 +7,8 @@
   const presets = JSON.parse(document.getElementById('pi-presets').textContent);
   const tools = new Map();
   const thoughts = new Map();
+  const runningTools = new Map();
+  let activity = '', followOutput = true, touchingMessages = false, touchGesture = false, lastScrollTop = 0, scrolledDown = false;
   let sid = '', busy = false, streaming = false, appending = false, started = false, assistant = null;
   let sessions = [], attachments = [], chosenFiles = [], promptSnapshot = null;
   let optionModels = [], optionLevels = [];
@@ -47,6 +49,8 @@
 
   const status = text => {
     el('status').textContent = t(text);
+    el('status-line')?.classList.toggle('pi-status-idle', text === 'Ready' || text === t('Ready'));
+    el('status-line')?.classList.toggle('pi-status-working', text === 'Working…' || text === t('Working…'));
     const dot = document.getElementById('pi-status-indicator');
     if (dot) {
       dot.className = 'pi-pulse-dot';
@@ -92,7 +96,9 @@
   function setBusy(value, activeStream = false) {
     busy = value;
     streaming = value && activeStream;
-    ['new', 'archive', 'model', 'upload', 'search', 'save-prompt', 'custom-prompt-name', 'custom-prompt-text'].forEach(id => { el(id).disabled = value; });
+    if (streaming) setActivity(t('Working…'));
+    if (!value) { setActivity(''); runningTools.clear(); }
+    ['new', 'archive', 'mobile-archive', 'model', 'upload', 'search', 'save-prompt', 'custom-prompt-name', 'custom-prompt-text'].forEach(id => { el(id).disabled = value; });
     el('input').disabled = value && !streaming;
     el('send').disabled = appending || (value && !streaming);
     el('thinking').disabled = value || optionLevels.length < 2;
@@ -195,11 +201,100 @@
     history.replaceState(null, '', url);
   }
 
+  function refreshActivityTip() {
+    if (el('activity-text').textContent !== activity) el('activity-text').textContent = activity;
+    el('activity-tip').hidden = !activity || !el('app').classList.contains('hide-tools');
+    followMessages();
+  }
+
+  function setActivity(text) {
+    activity = text;
+    refreshActivityTip();
+  }
+
+  const nearBottom = () => el('messages').scrollHeight - el('messages').clientHeight - el('messages').scrollTop <= 24;
+  function updateJumpButton() {
+    el('jump-latest').hidden = followOutput || nearBottom();
+  }
+
+  function followMessages() {
+    if (followOutput && !touchingMessages) {
+      el('messages').scrollTop = el('messages').scrollHeight;
+      lastScrollTop = el('messages').scrollTop;
+    }
+    updateJumpButton();
+  }
+
+  function pauseFollowing() {
+    followOutput = false;
+    updateJumpButton();
+  }
+
+  function startReading() {
+    if (touchingMessages) return;
+    touchingMessages = true;
+    scrolledDown = false;
+    lastScrollTop = el('messages').scrollTop;
+    pauseFollowing();
+  }
+
+  function finishReadingGesture() {
+    if (!touchingMessages) return;
+    touchingMessages = false;
+    if (scrolledDown && nearBottom()) followOutput = true;
+    updateJumpButton();
+  }
+
+  el('messages').addEventListener('pointerdown', startReading, {passive: true});
+  el('messages').addEventListener('touchstart', () => {
+    touchGesture = true;
+    startReading();
+  }, {passive: true});
+  for (const type of ['pointerup', 'pointercancel']) {
+    // Native touch scrolling cancels pointer events before the finger is lifted.
+    window.addEventListener(type, () => { if (!touchGesture) finishReadingGesture(); }, {passive: true});
+  }
+  for (const type of ['touchend', 'touchcancel']) {
+    window.addEventListener(type, event => {
+      if (event.touches?.length) return;
+      touchGesture = false;
+      finishReadingGesture();
+    }, {passive: true});
+  }
+  el('messages').addEventListener('wheel', pauseFollowing, {passive: true});
+  el('messages').addEventListener('keydown', event => {
+    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) pauseFollowing();
+  });
+  el('messages').addEventListener('scroll', () => {
+    const top = el('messages').scrollTop;
+    if (top !== lastScrollTop) {
+      if (touchingMessages) scrolledDown = top > lastScrollTop;
+      else followOutput = top > lastScrollTop && nearBottom();
+    }
+    lastScrollTop = top;
+    updateJumpButton();
+  }, {passive: true});
+  el('jump-latest').onclick = () => {
+    followOutput = true;
+    touchingMessages = false; touchGesture = false;
+    followMessages();
+  };
+
+  function updateEmptyState() {
+    const empty = el('empty-state');
+    if (empty) empty.hidden = el('messages').children.length > 0;
+  }
+
   function resetMessages() {
     assistant = null;
     tools.clear();
     thoughts.clear();
+    runningTools.clear();
+    setActivity('');
+    followOutput = true; touchingMessages = false; touchGesture = false; lastScrollTop = 0;
     el('messages').replaceChildren();
+    updateJumpButton();
+    updateEmptyState();
   }
 
   function render(body, text) {
@@ -239,7 +334,7 @@
       }
     });
 
-    el('messages').scrollTop = el('messages').scrollHeight;
+    followMessages();
   }
 
   function bubble(role, text, attached = []) {
@@ -281,6 +376,7 @@
 
     section.append(wrap);
     el('messages').append(section);
+    updateEmptyState();
     render(body, text);
     return body;
   }
@@ -308,6 +404,7 @@
     details.append(summary, cardBody);
     wrapper.append(details);
     el('messages').append(wrapper);
+    updateEmptyState();
     return body;
   }
 
@@ -318,7 +415,7 @@
       tools.set(id, body);
     }
     body.textContent = text;
-    el('messages').scrollTop = el('messages').scrollHeight;
+    followMessages();
   }
 
   function thinking(index, text, append = false) {
@@ -328,7 +425,7 @@
       thoughts.set(index, body);
     }
     body.textContent = (append ? body.textContent : '') + text;
-    el('messages').scrollTop = el('messages').scrollHeight;
+    followMessages();
   }
 
   function assistantDetails(message) {
@@ -473,30 +570,40 @@
   function event(record) {
     if (record.type === 'message_start' && record.message?.role === 'assistant') { assistant = null; thoughts.clear(); }
     if (record.type === 'message_update' && record.assistantMessageEvent?.type === 'text_delta') {
+      setActivity('');
       assistant ||= bubble('Assistant', ''); render(assistant, assistant.dataset.text + record.assistantMessageEvent.delta);
     }
     if (record.type === 'message_update') {
       const update = record.assistantMessageEvent;
+      if (['thinking_start', 'thinking_delta'].includes(update?.type) && !runningTools.size) setActivity(t('Thinking…'));
       if (update?.type === 'thinking_delta') thinking(update.contentIndex, update.delta, true);
-      if (update?.type === 'thinking_end') thinking(update.contentIndex, update.content);
+      if (update?.type === 'thinking_end') {
+        thinking(update.contentIndex, update.content);
+        if (!runningTools.size) setActivity(t('Preparing a response…'));
+      }
     }
     if (record.type === 'message_end' && record.message.role === 'assistant') {
       assistantDetails(record.message);
       const text = content(record.message);
-      if (text) { assistant ||= bubble('Assistant', ''); render(assistant, text); }
-      if (record.message.errorMessage) throw new Error(record.message.errorMessage);
+      if (text) { setActivity(''); assistant ||= bubble('Assistant', ''); render(assistant, text); }
+      if (record.message.errorMessage) { setActivity(''); throw new Error(record.message.errorMessage); }
       assistant = null;
     }
     if (record.type === 'tool_execution_start') {
-      assistant = null; tool(record.toolCallId, record.toolName, JSON.stringify(record.args, null, 2)); status(t('Running {tool}…', {tool: record.toolName}));
+      assistant = null; tool(record.toolCallId, record.toolName, JSON.stringify(record.args, null, 2));
+      runningTools.set(record.toolCallId, record.toolName || t('command'));
+      setActivity(t('Running {tool}…', {tool: runningTools.get(record.toolCallId)}));
     }
     if (['tool_execution_update', 'tool_execution_end'].includes(record.type)) {
+      if (record.type === 'tool_execution_end') runningTools.delete(record.toolCallId);
+      const toolName = runningTools.values().next().value;
+      setActivity(toolName ? t('Running {tool}…', {tool: toolName}) : t('Preparing a response…'));
       const result = record.result || record.partialResult;
       tool(record.toolCallId, record.toolName, `${record.isError ? t('Failed') + '\n' : ''}${content(result || {}) || JSON.stringify(result, null, 2)}`);
     }
     if (record.type === 'status') status(record.message);
-    if (record.type === 'error') throw new Error(record.message);
-    if (record.type === 'done') status('Ready');
+    if (record.type === 'error') { setActivity(''); runningTools.clear(); throw new Error(record.message); }
+    if (record.type === 'done') { setActivity(''); runningTools.clear(); status('Ready'); }
   }
 
   el('search').oninput = renderHistory;
@@ -542,7 +649,7 @@
     sid = ''; started = false; promptSnapshot = null; attachments = []; chosenFiles = [];
     resetMessages(); renderAttachments(); renderFiles([]); el('upload').value = ''; el('input').value = '';
     autoExpandInput();
-    el('title').textContent = t('New conversation'); el('input').placeholder = t('Ask Pi a question or describe a task…');
+    el('title').textContent = t('New conversation'); el('input').placeholder = t('Message Pi…');
     el('prompt').value = 'general'; locationForConversation(); renderHistory(); promptPreview(); setBusy(true);
     closeMobileDrawer();
     try { await loadOptions(); updateBadges(); status('Ready'); } catch (error) { status(error.message); }
@@ -557,10 +664,12 @@
       link.href = result.url;
       link.className = 'btn btn-sm btn-outline-success py-0 px-2 ms-1';
       link.textContent = t('View saved archive →');
+      el('status-line').classList.remove('pi-status-idle');
       el('status').replaceChildren(document.createTextNode(t('Snapshot saved! ')), link);
     } catch (error) { status(error.message); }
     finally { setBusy(false); }
   };
+  el('mobile-archive').onclick = () => el('archive').click();
   el('stop').onclick = async () => {
     el('stop').disabled = true;
     try { await api(`/sessions/${sid}/stop`, {}); status('Stopping…'); }
@@ -622,13 +731,16 @@
         if (done) break;
       }
       if (!doneEvent) throw new Error(t('Connection ended before completion. Reopen the conversation to recover saved messages.'));
-    } catch (error) { status(error.message); if (reader) await reader.cancel().catch(() => {}); }
+    } catch (error) {
+      setActivity(''); runningTools.clear();
+      status(error.message); if (reader) await reader.cancel().catch(() => {});
+    }
     finally {
       try {
         await refreshHistory(); await refreshFiles();
         el('title').textContent = sessions.find(item => item.id === sid)?.title || t('New conversation');
       } catch (error) { status(error.message); }
-      setBusy(false); el('input').focus();
+      setBusy(false); if (followOutput) el('input').focus();
     }
   };
 
@@ -642,6 +754,7 @@
     const t2 = document.getElementById('pi-settings-toggle-tools');
     if (t1) t1.checked = show;
     if (t2) t2.checked = show;
+    refreshActivityTip();
   }
 
   const toggleTools = document.getElementById('pi-toggle-tools');
@@ -688,7 +801,19 @@
     showDesktopBtn.onclick = () => setDesktopSidebarHidden(false);
   }
 
+  function fitMobileViewport() {
+    if (window.innerWidth < 768) {
+      el('app').style.height = `${window.visualViewport?.height || window.innerHeight}px`;
+    } else {
+      el('app').style.removeProperty('height');
+    }
+    followMessages();
+  }
+  window.addEventListener('resize', fitMobileViewport);
+  window.visualViewport?.addEventListener('resize', fitMobileViewport);
+
   async function initialize() {
+    fitMobileViewport();
     setToolsVisibility(false);
     try {
       setDesktopSidebarHidden(localStorage.getItem('pi_sidebar_desktop_hidden') !== 'false');

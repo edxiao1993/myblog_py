@@ -60,6 +60,21 @@ class LanguageTests(unittest.TestCase):
             self.assertIn(label, body)
             self.assertIn('pi-wrapper hide-tools pi-desktop-sidebar-hidden', body)
 
+    def test_pi_mobile_greeting_and_navigation_follow_browser_language(self):
+        for language, greeting, placeholder, settings in [
+                ('en', 'What’s the plan for today?', 'Message Pi…', 'Settings'),
+                ('zh-CN', '今天有什么计划？', '给 Pi 发消息…', '设置')]:
+            self.client.set_cookie('language', language)
+            body = self.client.get('/preview/pi_agent').get_data(as_text=True)
+            self.assertIn(greeting, body)
+            self.assertIn(placeholder, body)
+            self.assertIn(settings, body)
+            self.assertIn('Jump to latest' if language == 'en' else '跳到最新消息', body)
+            self.assertIn('id="pi-language-choice"', body)
+            self.assertIn('name="csrf_token"', body)
+            self.assertIn('name="next" value="/preview/pi_agent?"', body)
+            self.assertIn('More chat options' if language == 'en' else '更多对话选项', body)
+
     def test_default_english_and_language_picker(self):
         body = self.client.get('/preview/login').get_data(as_text=True)
         self.assertIn('<html lang="en">', body)

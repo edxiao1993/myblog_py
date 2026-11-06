@@ -35,3 +35,18 @@ def on_reload(server):
     # HUP reloads workers, but Gunicorn otherwise keeps the old logger config.
     server.log.cfg = server.cfg
     server.log.setup(server.cfg)
+
+
+def post_worker_init(worker):
+    # Starts even without requests, including when Gunicorn uses --preload.
+    app = worker.wsgi
+    if hasattr(app, 'extensions'):
+        from services.pi_memory_scheduler import start_memory_scheduler
+        start_memory_scheduler(app)
+
+
+def worker_exit(server, worker):
+    app = getattr(worker, 'wsgi', None)
+    if hasattr(app, 'extensions'):
+        from services.pi_memory_scheduler import stop_memory_scheduler
+        stop_memory_scheduler(app)

@@ -390,3 +390,66 @@ its working directory. It uses the same rotating handler, and access logs contai
 only method, status, duration, PID and request ID. An explicit different Gunicorn
 config must import/merge these logging settings. Proxy logs and the systemd
 journal are managed separately by their own services.
+
+### Pi long-term memory (nightly summaries)
+
+The web application runs a background memory job every night at 03:00 in the
+server's timezone. No cron service, additional package, or separate process needs
+to be installed. It uses the web service account's existing Pi credentials.
+Set `PI_MEMORY_ENABLED=False` to disable the scheduled job, or change
+`PI_MEMORY_HOUR` (0–23) to choose a different hour.
+
+The job reads completed user and assistant text from each user's `messages.jsonl`
+files. Thinking blocks, tool output, attachments and native `session.jsonl` files
+are not sent to the summary model. Busy conversations are skipped until the next
+run. Legacy numeric user directories are picked up after the existing login-time
+migration to `users/<login>/`.
+
+Each user gets a private `PI_DATA_DIR/users/<login>/memory.json` containing a
+summary and byte-offset checkpoints. The first job summarizes existing chats;
+later jobs combine only new text with the previous summary. Large inputs are
+processed in batches. Summary and checkpoints are saved together by atomic rename
+only after all batches succeed. Failed jobs preserve the old state and retry next
+time; overlapping jobs skip users already being processed. Back up memory files
+with Pi data, and keep that directory out of Git and deployment uploads.
+
+Each new Pi run (including resumed conversations) loads the latest summary into a
+separate prompt section as potentially outdated background context. Saved prompt
+presets and conversation transcripts are unchanged. Missing or corrupt memory does
+not block chatting; corrupt state is not overwritten by the job. The model is
+instructed to retain durable facts and preferences, omit secrets, and give current
+user instructions priority. Summaries are model-generated and can be inaccurate.
+Removing `memory.json` clears the injected summary, but a later job will rebuild
+it from existing chats. It does not erase information in Pi's native chat history.
+
+For a manual run, activate your deployment virtualenv first:
+
+```sh
+cd /path/to/application
+. /path/to/virtualenv/bin/activate
+python summarize_pi_memory.py
+# Or process one login only:
+python summarize_pi_memory.py --user alice
+```
+
+Gunicorn starts the scheduler in each worker using `gunicorn.conf.py`, including
+with `--preload` and before any requests arrive. A shared file lock and persisted
+run date in `PI_DATA_DIR` allow only one pass per day across workers on the same
+host. Keep this data directory on storage supporting reliable local file locks.
+An explicit different Gunicorn config must also import the `post_worker_init` and
+`worker_exit` hooks. Flask's direct development server starts its scheduler in the
+serving process; other WSGI setups start it on the first request.
+
+After a restart later than the scheduled hour, a missed job for today runs on
+startup. There is no separate replay per missed day: transcript checkpoints cover
+all unprocessed text. Completed passes with per-user failures retry those users
+on the next day. If a worker dies mid-pass, another worker can resume without
+losing saved user summaries. Graceful worker shutdown cancels active summary
+subprocesses. The scheduler is disabled in Flask tests.
+
+`PI_MEMORY_MODEL=provider/model` optionally selects a summary model; otherwise it
+uses `PI_PROVIDER`/`PI_MODEL` or Pi defaults. `PI_TIMEOUT` limits each batch. Logs
+contain counts and error types, not conversation content. The optional manual
+command loads the project's `.env`, needs no database connection, and exits
+nonzero if any user fails while continuing to process other users. Do not also
+install a cron job for the same task; the application now handles the schedule.

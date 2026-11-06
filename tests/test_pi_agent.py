@@ -339,6 +339,26 @@ for line in sys.stdin:
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.json['settings']['thinking'], 'low')
 
+    def test_user_memory_is_loaded_fresh_without_changing_saved_prompt(self):
+        agent = PiService(self.app.config)
+        sid = self.create()
+        folder = agent.folder(User(1), sid)
+        saved_prompt = agent.metadata(folder)['prompt_text']
+        other_root = agent.user_root(User(2))
+        (other_root / 'memory.json').write_text(json.dumps({'summary': 'OTHER USER PRIVATE', 'checkpoints': {}}))
+        for summary in ['Prefers concise answers.', 'Prefers detailed answers.']:
+            (folder.parent / 'memory.json').write_text(json.dumps({'summary': summary, 'checkpoints': {}}))
+            response = self.client.post(f'/api/pi/sessions/{sid}/messages',
+                json={'message': 'hello'}, headers=self.headers)
+            self.assertIn('"type": "done"', response.data.decode())
+            args = json.loads((agent.workspace('kevin') / 'rpc-test-command.json').read_text())
+            prompt = args[args.index('--append-system-prompt') + 1]
+            self.assertIn(summary, prompt)
+            self.assertNotIn('OTHER USER PRIVATE', prompt)
+            self.assertEqual(agent.metadata(folder)['prompt_text'], saved_prompt)
+        self.assertTrue((folder / 'messages.jsonl').exists())
+        self.assertIn('--session', args)
+
     def test_upload_download_and_file_ownership(self):
         from io import BytesIO
         sid = self.create()
@@ -558,7 +578,13 @@ for line in sys.stdin:
         self.assertNotIn('checked', parser.elements['pi-settings-toggle-tools'])
         self.assertIn('hidden', parser.elements['pi-conversation-info'])
         self.assertNotIn('pi-suggestion-btn', html)
-        self.assertNotIn('pi-empty', html)
+        self.assertIn('id="pi-empty-state"', html)
+        self.assertIn('hidden', parser.elements['pi-activity-tip'])
+        self.assertIn('hidden', parser.elements['pi-jump-latest'])
+        self.assertEqual(parser.elements['pi-messages']['tabindex'], '0')
+        self.assertIn('id="pi-mobile-archive"', html)
+        self.assertIn('id="pi-language-choice"', html)
+        self.assertIn('<body class="pi-page">', html)
 
 
 

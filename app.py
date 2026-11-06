@@ -10,6 +10,7 @@ from models.user import User
 from routes import register_blueprints
 from utils.logger import setup_logging
 from utils.i18n import init_i18n, translate
+from services.pi_memory_scheduler import start_memory_scheduler
 
 # Load environment variables
 load_dotenv()
@@ -58,6 +59,9 @@ def create_app():
         PI_PROVIDER=os.environ.get('PI_PROVIDER', ''),
         PI_MODEL=os.environ.get('PI_MODEL', ''),
         PI_TIMEOUT=int(os.environ.get('PI_TIMEOUT', '600')),
+        PI_MEMORY_MODEL=os.environ.get('PI_MEMORY_MODEL', ''),
+        PI_MEMORY_ENABLED=os.environ.get('PI_MEMORY_ENABLED', 'true').lower() in ('true', '1'),
+        PI_MEMORY_HOUR=int(os.environ.get('PI_MEMORY_HOUR', '3')),
         PI_MAX_UPLOAD_BYTES=int(os.environ.get('PI_MAX_UPLOAD_BYTES', str(200 * 1024 * 1024))),
     )
     os.makedirs(app.config['PI_WORKSPACE'], mode=0o700, exist_ok=True)
@@ -93,6 +97,11 @@ def create_app():
             app.permanent_session_lifetime = timedelta(hours=36)
             session.modified = True
 
+    # WSGI fallback: start once per worker after fork, never in a preload master.
+    @app.before_request
+    def ensure_memory_scheduler():
+        start_memory_scheduler(app)
+
     # Register blueprints
     register_blueprints(app)
     logger.info("All blueprints registered")
@@ -102,4 +111,7 @@ def create_app():
 app = create_app()
 
 if __name__ == '__main__':
-    app.run(debug=os.environ.get('FLASK_DEBUG', 'False').lower() == 'true')
+    debug = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+    if not debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        start_memory_scheduler(app)
+    app.run(debug=debug)

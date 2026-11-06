@@ -1,4 +1,8 @@
 {% extends 'base.html' %}
+{% block body_class %}pi-page{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pi-mobile.css', v='20261106-reading') }}">
+{% endblock %}
 {% block content %}
 <style>
 /* Layout & Container */
@@ -76,7 +80,8 @@
   overflow-y: auto;
   background: #f8fafc;
   border-radius: 12px;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
+  overflow-anchor: none;
   display: flex;
   flex-direction: column;
 }
@@ -287,11 +292,11 @@
                 <div class="d-flex align-items-center gap-2">
                     <!-- Conversations toggle button (drawer on mobile, hide/show on desktop) -->
                     <button id="pi-sidebar-toggle" class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-1"
-                            type="button"
+                            type="button" aria-controls="pi-sidebar-drawer"
                             title="{{ _('Toggle conversation sidebar') }}"
                             aria-label="{{ _('Toggle conversations sidebar') }}">
                         <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M2.5 12a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5z"/></svg>
-                        <span>{{ _('Conversations') }}</span>
+                        <span class="pi-button-label">{{ _('Conversations') }}</span>
                     </button>
                     <div>
                         <div class="d-flex align-items-center gap-2">
@@ -300,16 +305,26 @@
                     </div>
                 </div>
                 <div class="d-flex align-items-center gap-2">
-                    <button id="pi-new" class="btn btn-primary btn-sm d-inline-flex align-items-center gap-1">
+                    <button id="pi-new" type="button" aria-label="{{ _('New chat') }}" class="btn btn-primary btn-sm d-inline-flex align-items-center gap-1">
                         <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2z"/></svg>
-                        <span>{{ _('New chat') }}</span>
+                        <span class="pi-button-label">{{ _('New chat') }}</span>
                     </button>
-                    <button id="pi-settings-toggle" class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#pi-settings-collapse" aria-expanded="false" aria-controls="pi-settings-collapse" title="{{ _('Toggle Model & System Settings') }}">
+                    <button id="pi-settings-toggle" class="btn d-none d-md-inline-flex btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#pi-settings-collapse" aria-expanded="false" aria-controls="pi-settings-collapse" title="{{ _('Toggle Model & System Settings') }}">
                         <span>{{ _('⚙️ Settings') }}</span>
                     </button>
-                    <button id="pi-archive" class="btn btn-outline-secondary btn-sm" title="{{ _('Save archive snapshot') }}">
+                    <button id="pi-archive" class="btn d-none d-md-inline-flex btn-outline-secondary btn-sm" title="{{ _('Save archive snapshot') }}">
                         <span>{{ _('💾 Snapshot') }}</span>
                     </button>
+                    <div class="dropdown d-md-none">
+                        <button class="btn pi-mobile-icon" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="{{ _('More chat options') }}">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                        </button>
+                        <div class="dropdown-menu dropdown-menu-end shadow-sm">
+                            <button class="dropdown-item" type="button" data-bs-toggle="collapse" data-bs-target="#pi-settings-collapse" aria-controls="pi-settings-collapse" aria-expanded="false">{{ _('Settings') }}</button>
+                            <button class="dropdown-item" type="button" data-bs-toggle="collapse" data-bs-target="#pi-files-collapse" aria-controls="pi-files-collapse" aria-expanded="false">{{ _('📁 Conversation Files') }}</button>
+                            <button id="pi-mobile-archive" class="dropdown-item" type="button">{{ _('Save archive snapshot') }}</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -339,6 +354,25 @@
                         <span class="position-absolute top-50 start-0 translate-middle-y ms-2 text-muted small" style="pointer-events:none;">🔍</span>
                     </div>
                     <div id="pi-history" class="pi-history flex-grow-1" aria-label="{{ _('Conversation history') }}"></div>
+                    <nav class="pi-mobile-navigation d-md-none border-top mt-3 pt-3" aria-label="{{ _('Navigation') }}">
+                        <a href="{{ url_for('main.index') }}">{{ _('Posts') }}</a>
+                        <a href="{{ url_for('moments.moments') }}">{{ _('Secret Moments') }}</a>
+                        <a href="{{ url_for('ai_sessions.sessions_list') }}">{{ _('AI Sessions') }}</a>
+                        <form action="{{ url_for('i18n_language') }}" method="post" class="my-2">
+                            <input type="hidden" name="csrf_token" value="{{ language_csrf }}">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <label for="pi-language-choice" class="form-label small">{{ _('Language') }}</label>
+                            <select id="pi-language-choice" name="language" class="form-select form-select-sm" onchange="this.form.requestSubmit()">
+                                <option value="en" {% if locale() == 'en' %}selected{% endif %}>English</option>
+                                <option value="zh-CN" {% if locale() == 'zh-CN' %}selected{% endif %}>简体中文</option>
+                            </select>
+                        </form>
+                        {% if current_user.is_authenticated %}
+                        <a href="{{ url_for('auth.logout') }}">{{ _('Logout') }}</a>
+                        {% else %}
+                        <a href="{{ url_for('auth.login') }}">{{ _('Login') }}</a>
+                        {% endif %}
+                    </nav>
                 </div>
             </div>
         </aside>
@@ -434,11 +468,23 @@
             </div>
 
             <!-- Chat Stream / Message Box -->
-            <div id="pi-messages" class="card border shadow-xs p-3 mb-2 flex-grow-1" role="log" aria-label="{{ _('Conversation') }}" aria-live="polite">
+            <div class="pi-stream-shell">
+                <div id="pi-messages" tabindex="0" class="card border shadow-xs p-3 mb-2 flex-grow-1" role="log" aria-label="{{ _('Conversation') }}" aria-live="polite"></div>
+                <div id="pi-empty-state" class="pi-empty-state d-md-none">
+                    <div class="pi-welcome-mark" aria-hidden="true">π</div>
+                    <h2>{{ _('What’s the plan for today?') }}</h2>
+                </div>
+                <div id="pi-activity-tip" class="pi-activity-tip" role="status" aria-live="polite" hidden>
+                    <span class="pi-pulse-dot pi-dot-busy" aria-hidden="true"></span>
+                    <span id="pi-activity-text"></span>
+                </div>
+                <button id="pi-jump-latest" class="btn btn-sm" type="button" hidden>
+                    <span aria-hidden="true">↓</span> {{ _('Jump to latest') }}
+                </button>
             </div>
 
             <!-- Status line with animated indicator -->
-            <div class="d-flex align-items-center justify-content-between mb-2 px-1">
+            <div id="pi-status-line" class="d-flex align-items-center justify-content-between mb-2 px-1">
                 <div class="d-flex align-items-center gap-2 small text-muted" role="status">
                     <span id="pi-status-indicator" class="pi-pulse-dot"></span>
                     <span id="pi-status">{{ _('Loading Pi settings…') }}</span>
@@ -452,17 +498,22 @@
                 <div id="pi-attachments" class="d-flex flex-wrap gap-1 mb-2 px-1" aria-label="{{ _('Attachments for next message') }}"></div>
 
                 <div class="position-relative">
-                    <textarea id="pi-input" class="form-control border-0 p-2" rows="2" maxlength="32000" placeholder="{{ _('Ask Pi a question or describe what to do with your files…') }}"></textarea>
+                    <textarea id="pi-input" class="form-control border-0 p-2" rows="2" maxlength="32000" placeholder="{{ _('Message Pi…') }}"></textarea>
                 </div>
 
-                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2 border-top px-1">
+                <div class="pi-composer-actions d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2 border-top px-1">
                     <div class="d-flex align-items-center gap-1">
-                        <label class="btn btn-sm btn-outline-secondary mb-0 d-inline-flex align-items-center gap-1" for="pi-upload" title="{{ _('Attach files from your device') }}">
+                        <label class="pi-attach-button btn btn-sm btn-outline-secondary mb-0 d-inline-flex align-items-center gap-1" for="pi-upload" title="{{ _('Attach files from your device') }}">
                             <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M4.5 3a2.5 2.5 0 0 1 5 0v9a1.5 1.5 0 0 1-3 0V5a.5.5 0 0 1 1 0v7a.5.5 0 0 0 1 0V3a1.5 1.5 0 1 0-3 0v9a2.5 2.5 0 0 0 5 0V5a.5.5 0 0 1 1 0v7a3.5 3.5 0 1 1-7 0V3z"/></svg>
-                            <span class="d-none d-sm-inline">{{ _('Attach') }}</span>
+                            <svg class="pi-attach-plus d-md-none" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                            <span class="pi-button-label">{{ _('Attach') }}</span>
                         </label>
+                        <button class="pi-settings-chip btn btn-sm d-md-none" type="button" data-bs-toggle="collapse" data-bs-target="#pi-settings-collapse" aria-controls="pi-settings-collapse" aria-expanded="false">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="white"/><circle cx="15" cy="17" r="3" fill="white"/></svg>
+                            {{ _('Settings') }}
+                        </button>
                         <input id="pi-upload" type="file" multiple class="visually-hidden" aria-label="{{ _('Attach files') }}">
-                        <button id="pi-files-toggle-btn" class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#pi-files-collapse" aria-expanded="false" aria-controls="pi-files-collapse" title="{{ _('View files for this conversation') }}">
+                        <button id="pi-files-toggle-btn" class="d-none d-md-inline-flex btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#pi-files-collapse" aria-expanded="false" aria-controls="pi-files-collapse" title="{{ _('View files for this conversation') }}">
                             📁 <span id="pi-files-count" class="badge bg-secondary rounded-pill">0</span>
                         </button>
                         <span class="small text-muted ms-1 d-none d-md-inline" style="font-size: 0.75rem;">{{ _('Up to 20 files ·') }} {{ upload_limit_mb }} {{ _('MB') }}</span>
@@ -473,8 +524,8 @@
                         <button id="pi-stop" class="btn btn-sm btn-outline-danger d-inline-flex align-items-center gap-1" type="button" disabled>
                             <span>⏹</span> <span>{{ _('Stop') }}</span>
                         </button>
-                        <button id="pi-send" class="btn btn-sm btn-primary px-3 d-inline-flex align-items-center gap-1" type="submit" title="{{ _('Send (⌘+Enter / Ctrl+Enter)') }}">
-                            <span>{{ _('Send') }}</span>
+                        <button id="pi-send" aria-label="{{ _('Send') }}" class="btn btn-sm btn-primary px-3 d-inline-flex align-items-center gap-1" type="submit" title="{{ _('Send (⌘+Enter / Ctrl+Enter)') }}">
+                            <span class="pi-button-label">{{ _('Send') }}</span>
                             <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M15.854.146a.5.5 0 0 1 .11.54l-5.8 14a.5.5 0 0 1-.928-.008L6.46 8.54.146 5.772a.5.5 0 0 1 .008-.928l14-5.8a.5.5 0 0 1 .54.111zM6.637 9.07l2.806 6.08 4.544-10.965-7.35 4.885zm4.886-7.35L2.84 6.275l6.08 2.806 2.603-4.36z"/></svg>
                         </button>
                     </div>
@@ -504,5 +555,5 @@
 <script id="pi-presets" type="application/json">{{ presets|tojson }}</script>
 <script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/purify.min.js') }}"></script>
-<script src="{{ url_for('static', filename='js/pi-agent.js', v='20261104-hidden') }}" defer></script>
+<script src="{{ url_for('static', filename='js/pi-agent.js', v='20261106-reading') }}" defer></script>
 {% endblock %}
