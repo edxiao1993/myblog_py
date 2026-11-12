@@ -313,7 +313,8 @@ class PiService:
             self.save(folder, {'role': 'user', 'content': message})
         agent_event('prompt.queued', session_id=folder.name)
 
-    def run(self, folder, message, lock, attachments=None):
+    def run(self, folder, message, lock, attachments=None, user_message_meta=None, assistant_message_meta=None,
+            release_lock=True, stop_event=None, on_process=None):
         process = None
         started = time.monotonic()
         context = {**agent_context(), 'session_id': folder.name}
@@ -347,6 +348,8 @@ class PiService:
             process = subprocess.Popen(args, cwd=self.workspace(folder.parent.name),
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.PIPE, start_new_session=True)
+            if on_process is not None:
+                on_process(process)
             log('process.started', process_id=process.pid,
                 model=settings.get('model') or self.config.get('PI_MODEL'), thinking=thinking)
             events = queue.Queue(maxsize=256)
@@ -402,6 +405,8 @@ class PiService:
             saved = {'role': 'user', 'content': message}
             if attachments:
                 saved['attachments'] = attachments
+            if user_message_meta:
+                saved.update(user_message_meta)
             self.save(folder, saved)
             if metadata['title'] == 'New conversation':
                 metadata['title'] = message[:70]
@@ -437,6 +442,8 @@ class PiService:
             stopped_at = None
             while True:
                 now = time.monotonic()
+                if stop_event is not None and stop_event.is_set():
+                    (folder / 'stop').touch()
                 if stopped_at is None and not (folder / 'stop').exists():
                     drain_inbox()
                 if stopped_at is None and ((folder / 'stop').exists() or now >= deadline):
@@ -489,6 +496,9 @@ class PiService:
                 if kind == 'extension_ui_request':
                     log('extension.dialog_cancelled', logging.WARNING)
                 if kind == 'message_end' and event['message'].get('role') != 'user':
+                    if assistant_message_meta and event['message'].get('role') == 'assistant':
+                        event['message'].update(assistant_message_meta)
+                        event['message']['id'] = 'msg-' + uuid.uuid4().hex
                     self.save(folder, event['message'])
                 if kind == 'extension_ui_request':
                     # Noninteractive web client: cancel dialogs rather than block indefinitely.
@@ -521,4 +531,5 @@ class PiService:
                 log('process.stopped', returncode=process.returncode, reason=outcome, stderr_bytes=stderr_stats['bytes'])
             if outcome == 'disconnected':
                 log('run.disconnected', logging.WARNING, duration_ms=round((time.monotonic() - started) * 1000))
-            lock.close()
+            if release_lock:
+                lock.close()

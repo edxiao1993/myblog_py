@@ -37,7 +37,7 @@ class InitDatabaseTests(unittest.TestCase):
             tables = {row[0] for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )}
-            self.assertEqual(tables, {'user', 'post', 'secret_moment', 'refresh_token'})
+            self.assertEqual(tables, {'user', 'post', 'secret_moment', 'refresh_token', 'push_device'})
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM user').fetchone()[0], 0)
 
     def test_rerun_preserves_user_password_and_moments(self):

@@ -16,6 +16,7 @@ from database import db
 from models.post import Post  # noqa: F401 -- register all tables
 from models.refresh_token import RefreshToken  # noqa: F401
 from models.secret_moment import SecretMoment  # noqa: F401
+from models.push_device import PushDevice  # noqa: F401
 from models.user import User
 
 def init_database():

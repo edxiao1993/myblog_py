@@ -1,3 +1,5 @@
+from .push import bp as push_bp
+from .agent_api import bp as agent_api_bp
 from .pi_agent import bp as pi_agent_bp
 from .main import bp as main_bp
 from .moments import bp as moments_bp
@@ -9,6 +11,8 @@ from .ai_sessions import bp as ai_sessions_bp
 
 
 def register_blueprints(app):
+    app.register_blueprint(push_bp, url_prefix='/api/push')
+    app.register_blueprint(agent_api_bp, url_prefix='/api/agent')
     app.register_blueprint(pi_agent_bp)
     app.register_blueprint(main_bp)
     app.register_blueprint(moments_bp, url_prefix='/moments')

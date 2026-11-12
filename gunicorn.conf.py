@@ -1,5 +1,6 @@
 """Automatically loaded from the application's working directory by Gunicorn."""
 import os
+import signal
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -39,6 +40,14 @@ def on_reload(server):
 
 def post_worker_init(worker):
     # Starts even without requests, including when Gunicorn uses --preload.
+    # Notify runs on SIGTERM before gthread waits for open SSE requests to drain.
+    from services.agent_service import request_agent_shutdown
+    previous = signal.getsignal(signal.SIGTERM)
+    def shutting_down(signum, frame):
+        request_agent_shutdown()
+        if callable(previous):
+            previous(signum, frame)
+    signal.signal(signal.SIGTERM, shutting_down)
     app = worker.wsgi
     if hasattr(app, 'extensions'):
         from services.pi_memory_scheduler import start_memory_scheduler
@@ -46,6 +55,8 @@ def post_worker_init(worker):
 
 
 def worker_exit(server, worker):
+    from services.agent_service import stop_agent_runs
+    stop_agent_runs()
     app = getattr(worker, 'wsgi', None)
     if hasattr(app, 'extensions'):
         from services.pi_memory_scheduler import stop_memory_scheduler
