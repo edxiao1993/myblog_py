@@ -35,6 +35,8 @@ class DatedSizeFileHandler(logging.Handler):
         super().__init__()
         self.path = Path(filename)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.history = self.path.parent / 'history'
+        self.history.mkdir(exist_ok=True)
         self.max_bytes = max_bytes
         self.retention_days = retention_days
         self.archive_pattern = re.compile(
@@ -53,10 +55,26 @@ class DatedSizeFileHandler(logging.Handler):
 
     def _cleanup(self):
         cutoff = time.time() - self.retention_days * 86400
-        for file in self.path.parent.iterdir():
-            if self.archive_pattern.fullmatch(file.name) and file.is_file():
+        for directory in (self.path.parent, self.history):
+            for file in directory.iterdir():
+                if not self.archive_pattern.fullmatch(file.name) or not file.is_file() or file.is_symlink():
+                    continue
                 if file.stat().st_mtime < cutoff:
                     file.unlink(missing_ok=True)
+                elif directory == self.path.parent:
+                    destination = self.history / file.name
+                    if destination.exists():
+                        day = datetime.fromtimestamp(file.stat().st_mtime).strftime('%Y-%m-%d')
+                        destination = self._archive_path(day)
+                    file.rename(destination)
+
+    def _archive_path(self, day):
+        index = 1
+        archive = self.history / f'{self.path.stem}.{day}.{index:03d}.log'
+        while archive.exists():
+            index += 1
+            archive = self.history / f'{self.path.stem}.{day}.{index:03d}.log'
+        return archive
 
     def cleanup(self):
         with self.file_lock():
@@ -76,11 +94,7 @@ class DatedSizeFileHandler(logging.Handler):
                     stat = self.path.stat()
                     day = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d')
                     if stat.st_size + len(data) > self.max_bytes or day != datetime.now().strftime('%Y-%m-%d'):
-                        index = 1
-                        archive = self.path.with_name(f'{self.path.stem}.{day}.{index:03d}.log')
-                        while archive.exists():
-                            index += 1
-                            archive = self.path.with_name(f'{self.path.stem}.{day}.{index:03d}.log')
+                        archive = self._archive_path(day)
                         self.path.rename(archive)
                 descriptor = os.open(self.path, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
                 with os.fdopen(descriptor, 'ab') as handle:

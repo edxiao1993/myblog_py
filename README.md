@@ -379,7 +379,8 @@ write a final application event.
 All five managed files (`myblog.log`, `agent.log`, `agent_error.log`,
 `gunicorn_access.log`, `gunicorn_error.log`) rotate before exceeding 20 MiB
 (20,971,520 bytes), and on the first write after a date change. Example archives:
-`agent.2026-10-29.001.log`, `agent.2026-10-29.002.log`. A process-safe file lock
+`history/agent.2026-10-29.001.log`, `history/agent.2026-10-29.002.log`. Existing
+managed archives in the log directory move into `history/` during cleanup. A process-safe file lock
 protects writes and rotation across Gunicorn workers. A single oversized record
 is truncated at 64 KiB. Retention is based on last-write time: startup and hourly
 background cleanup remove managed files older than 30 days, including idle files

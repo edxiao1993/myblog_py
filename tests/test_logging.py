@@ -34,7 +34,7 @@ class FileLoggingTests(unittest.TestCase):
         expected = [f'status-{index:03d}-' + 'x' * 25 for index in range(30)]
         for message in expected:
             self.logger.info(message)
-        files = list(self.root.glob('*.log'))
+        files = [self.root / 'agent.log', *self.root.glob('history/*.log')]
         self.assertGreater(len(files), 1)
         records = []
         for file in files:
@@ -55,7 +55,8 @@ class FileLoggingTests(unittest.TestCase):
         os.utime(unrelated, (timestamp, timestamp))
         self.handler.cleanup()
         self.assertFalse(old.exists())
-        self.assertTrue(recent.exists())
+        self.assertFalse(recent.exists())
+        self.assertTrue((self.root / 'history' / recent.name).exists())
         self.assertTrue(unrelated.exists())
 
     def test_daily_rotation(self):
@@ -64,7 +65,20 @@ class FileLoggingTests(unittest.TestCase):
         os.utime(self.root / 'agent.log', (timestamp, timestamp))
         self.logger.info('today')
         self.assertEqual((self.root / 'agent.log').read_text().strip(), 'today')
-        self.assertEqual(len(list(self.root.glob('agent.*.log'))), 1)
+        self.assertEqual(len(list(self.root.glob('history/agent.*.log'))), 1)
+
+    def test_cleanup_preserves_colliding_archives_and_expires_history(self):
+        history = self.root / 'history'
+        old = history / 'agent.2020-01-01.001.log'
+        old.write_text('expired')
+        timestamp = time.time() - 31 * 86400
+        os.utime(old, (timestamp, timestamp))
+        existing = history / 'agent.2099-01-01.001.log'
+        existing.write_text('existing')
+        (self.root / existing.name).write_text('migrated')
+        self.handler.cleanup()
+        self.assertFalse(old.exists())
+        self.assertCountEqual([p.read_text() for p in history.glob('*.log')], ['existing', 'migrated'])
 
     def test_error_classification_never_contains_raw_message(self):
         from utils.agent_logging import describe_error
@@ -81,7 +95,7 @@ class FileLoggingTests(unittest.TestCase):
             worker.join(timeout=10)
             self.assertEqual(worker.exitcode, 0)
         records = []
-        for file in self.root.glob('*.log'):
+        for file in [self.root / 'agent.log', *self.root.glob('history/*.log')]:
             records.extend(file.read_text().splitlines())
             self.assertLessEqual(file.stat().st_size, 160)
         self.assertCountEqual(records, [f'worker-{worker}-record-{index}' for worker in range(3) for index in range(20)])
