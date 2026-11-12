@@ -51,6 +51,7 @@ def create_app():
 
     # Pi inherits the service account's provider credentials and installed extensions.
     app.config.update(
+        CODING_PROJECT_ROOT=os.environ.get('CODING_PROJECT_ROOT', os.path.expanduser('~')),
         PI_EXECUTABLE=os.environ.get('PI_EXECUTABLE', 'pi'),
         PI_DATA_DIR=os.path.abspath(os.environ.get('PI_DATA_DIR', 'data/pi')),
         PI_WORKSPACE=os.path.abspath(os.environ.get('PI_WORKSPACE', 'data/pi-workspace')),

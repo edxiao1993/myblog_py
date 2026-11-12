@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block content %}
+<style>
+.coding-layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:1rem}.coding-chat{min-width:0}#coding-messages{height:65vh;overflow:auto;overflow-wrap:anywhere}#coding-messages pre{white-space:pre-wrap;margin:0}#coding-folders{max-height:35vh;overflow:auto}#coding-history{max-height:65vh;overflow:auto}.coding-controls{display:flex;gap:.5rem;align-items:end}.coding-controls label{flex:1;min-width:0}.coding-controls select{width:100%;min-width:0;text-overflow:ellipsis}#coding-directory-dialog{width:min(560px,calc(100vw - 2rem));max-height:85vh;overflow:auto;border:0;border-radius:.75rem;padding:1.5rem}#coding-directory-dialog::backdrop{background:rgba(0,0,0,.45)}@media(max-width:767px){.coding-layout{grid-template-columns:1fr}#coding-history{max-height:18vh}.coding-controls{flex-wrap:wrap}.coding-controls label{flex:1 1 120px}#coding-messages{height:60vh}}
+#coding-messages .coding-user-message{align-self:flex-end;margin-left:auto;width:fit-content;max-width:85%;min-width:0;flex-shrink:0;background-color:#e7f3ff;color:#16324f;border-color:#c6e2ff!important}
+#coding-messages .coding-markdown>:last-child{margin-bottom:0}#coding-messages .coding-markdown pre{white-space:pre;overflow-x:auto;padding:.75rem;background:rgba(127,127,127,.1);border-radius:.375rem}#coding-messages .coding-markdown table{display:block;max-width:100%;overflow-x:auto}#coding-messages .coding-markdown th,#coding-messages .coding-markdown td{padding:.375rem;border:1px solid #adb5bd}#coding-messages .coding-markdown img{max-width:100%;height:auto}
+</style>
+<div id="coding-app" data-csrf="{{ csrf }}" class="container py-3">
+<div class="coding-layout">
+<aside class="card p-3">
+<button id="coding-directory" class="btn btn-outline-primary" aria-haspopup="dialog">{{ _('Choose project folder') }}</button>
+<span id="coding-project-name" class="small text-muted text-break mt-2"></span>
+<hr><button id="coding-new" class="btn btn-primary">{{ _('New conversation') }}</button><h2 class="h6 mt-3">{{ _('History') }}</h2><div id="coding-history"></div>
+</aside>
+<main class="coding-chat">
+<div class="coding-controls mb-2">
+<label>{{ _('Model') }} <select id="coding-model" class="form-select form-select-sm"></select></label>
+<label>{{ _('Thinking level') }} <select id="coding-thinking" class="form-select form-select-sm"></select></label>
+<label>{{ _('Command') }} <select id="coding-command" class="form-select form-select-sm"></select></label>
+</div>
+<div id="coding-messages" class="card p-3 mb-2" role="log" aria-label="{{ _('Conversation') }}"></div>
+<p id="coding-status" role="status"></p>
+<form id="coding-form"><label for="coding-message">{{ _('Message') }}</label><textarea id="coding-message" aria-keyshortcuts="Meta+Enter Control+Enter" class="form-control mb-2" rows="3" required></textarea><button id="coding-send" class="btn btn-primary">{{ _('Send') }}</button> <button id="coding-stop" type="button" class="btn btn-outline-danger" disabled>{{ _('Stop') }}</button></form>
+</main></div>
+<dialog id="coding-directory-dialog" aria-labelledby="coding-directory-title">
+<div class="d-flex justify-content-between align-items-center mb-3"><h2 id="coding-directory-title" class="h5 mb-0">{{ _('Choose project folder') }}</h2><button id="coding-directory-close" class="btn-close" aria-label="{{ _('Close') }}"></button></div>
+<label for="coding-path">{{ _('Project folder') }}</label><input id="coding-path" class="form-control mb-2" autocomplete="off">
+<div class="d-flex gap-2 mb-3"><button id="coding-browse" class="btn btn-outline-primary">{{ _('Open folder') }}</button><button id="coding-parent" class="btn btn-outline-secondary">{{ _('Parent folder') }}</button></div>
+<details class="mb-3"><summary>{{ _('Browse folders') }}</summary><div id="coding-folders"></div></details>
+<label for="coding-folder-name">{{ _('New folder name') }}</label><div class="d-flex gap-2"><input id="coding-folder-name" class="form-control"><button id="coding-create" class="btn btn-outline-primary text-nowrap">{{ _('Create folder') }}</button></div>
+<p id="coding-directory-status" class="mt-2" role="status"></p>
+<button id="coding-select" class="btn btn-primary mt-2">{{ _('Use this folder') }}</button>
+</dialog></div>
+<script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/purify.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/coding-agent.js', v='20261112-append-messages') }}" defer></script>
+{% endblock %}

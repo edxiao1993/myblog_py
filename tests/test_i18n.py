@@ -19,7 +19,7 @@ class LanguageTests(unittest.TestCase):
         login.user_loader(lambda uid: self.user)
         init_i18n(self.app)
         endpoints = ['main.index', 'main.create_post', 'moments.moments',
-                     'ai_sessions.sessions_list', 'pi_agent.page', 'main.view_post', 'moments.add_moment', 'auth.login', 'auth.register', 'auth.logout']
+                     'ai_sessions.sessions_list', 'pi_agent.page', 'coding_agent.page', 'main.view_post', 'moments.add_moment', 'auth.login', 'auth.register', 'auth.logout']
         for endpoint in endpoints:
             self.app.add_url_rule('/test/' + endpoint, endpoint, lambda: '')
         @self.app.get('/preview/<name>')
@@ -43,6 +43,22 @@ class LanguageTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             token = session['language_csrf']
         return self.client.post('/language', data={'language': language, 'csrf_token': token, 'next': next_page})
+
+    def test_coding_page_languages_and_mobile_layout(self):
+        for language, label in [('en', 'Project folder'), ('zh-CN', '项目文件夹')]:
+            self.client.set_cookie('language', language)
+            body = self.client.get('/preview/coding_agent').get_data(as_text=True)
+            self.assertIn(label, body)
+            self.assertIn('@media(max-width:767px)', body)
+            self.assertNotIn('custom-prompt', body)
+            self.assertIn('<dialog id="coding-directory-dialog"', body)
+            self.assertNotIn('id="coding-path"', body.split('</aside>')[0])
+            self.assertNotIn('id="coding-project"', body)
+            self.assertNotIn('id="coding-arguments"', body)
+            self.assertNotIn('id="coding-execute"', body)
+            self.assertIn('选择项目文件夹' if language == 'zh-CN' else 'Choose project folder', body)
+            self.assertIn('浏览文件夹' if language == 'zh-CN' else 'Browse folders', body)
+
 
     def test_general_prompt_option_is_default_and_translated(self):
         for language, label in [('en', 'General assistant'), ('zh-CN', '通用助手')]:

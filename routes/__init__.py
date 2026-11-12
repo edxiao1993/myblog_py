@@ -14,6 +14,7 @@ def register_blueprints(app):
     app.register_blueprint(push_bp, url_prefix='/api/push')
     app.register_blueprint(agent_api_bp, url_prefix='/api/agent')
     app.register_blueprint(pi_agent_bp)
+    app.register_blueprint(pi_agent_bp, name="coding_agent", url_prefix="/coding")
     app.register_blueprint(main_bp)
     app.register_blueprint(moments_bp, url_prefix='/moments')
     app.register_blueprint(auth_bp)

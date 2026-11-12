@@ -61,6 +61,9 @@ def authorized(fn):
 
 
 def service():
+    if request.blueprint == 'coding_agent':
+        from services.coding_service import CodingService
+        return CodingService(current_app.config)
     return PiService(current_app.config)
 
 
@@ -76,6 +79,8 @@ def folder(sid):
 @authorized
 def page():
     session.setdefault('pi_csrf', secrets.token_hex(32))
+    if request.blueprint == 'coding_agent':
+        return render_template('coding_agent.html', csrf=session['pi_csrf'])
     presets = service().prompts(current_user)
     prompt = presets['general']['text']
     return render_template('pi_agent.html', prompt=prompt, csrf=session['pi_csrf'],
@@ -108,6 +113,13 @@ def sessions():
         except (OSError, RuntimeError) as exc:
             agent_event('request.rejected', logging.ERROR, **describe_error(exc))
             return jsonify(error=str(exc)), 503
+    if request.blueprint == 'coding_agent' and request.args.get('project'):
+        try:
+            project = str(agent.project(request.args['project']))
+            agent.import_native(current_user, project)
+            return jsonify([item for item in agent.list(current_user) if item['project'] == project])
+        except (ValueError, OSError):
+            return jsonify(error=_('Unable to open or create this project folder.')), 400
     return jsonify(agent.list(current_user))
 
 
@@ -231,7 +243,8 @@ def archive(sid):
 def options():
     try:
         agent = service()
-        result = agent.options(PiService.login_folder(current_user.username), request.args.get('model', ''))
+        kwargs = {'project': agent.project(request.args.get('project'))} if request.blueprint == 'coding_agent' else {}
+        result = agent.options(PiService.login_folder(current_user.username), request.args.get('model', ''), **kwargs)
         result['prompts'] = agent.prompts(current_user)
         return jsonify(result)
     except ValueError as exc:
@@ -325,3 +338,32 @@ def download(sid, name):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Cache-Control'] = 'private, no-store'
     return response
+
+
+@bp.route('/api/pi/projects', methods=['GET', 'POST'])
+@authorized
+def projects():
+    if request.blueprint != 'coding_agent':
+        abort(404)
+    try:
+        agent = service()
+        data = request.get_json(silent=True) or {} if request.method == 'POST' else request.args
+        path = agent.project(data.get('path'))
+        if request.method == 'POST':
+            name = data.get('name', '')
+            if not isinstance(name, str) or not name.strip() or name in ('.', '..') or '/' in name or '\\' in name:
+                raise ValueError('Enter a valid folder name.')
+            path = path / name
+            path.mkdir(mode=0o700)
+        root = agent.project()
+        children = []
+        for child in path.iterdir():
+            try:
+                resolved = agent.project(str(child))
+                children.append({'name': child.name, 'path': str(resolved)})
+            except (ValueError, OSError):
+                continue
+        return jsonify(path=str(path), parent=str(path.parent) if path != root else None,
+                       folders=sorted(children, key=lambda item: item['name'].lower()))
+    except (ValueError, OSError, TypeError) as exc:
+        return jsonify(error=_('Unable to open or create this project folder.')), 400

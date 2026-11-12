@@ -68,6 +68,7 @@ for line in sys.stdin:
         login = LoginManager(self.app)
         login.user_loader(lambda uid: User(uid))
         self.app.register_blueprint(bp)
+        self.app.register_blueprint(bp, name="coding_agent", url_prefix="/coding")
         self.client = self.app.test_client()
         self.login(1)
         self.headers = {'X-CSRF-Token': 'token'}
@@ -585,6 +586,25 @@ for line in sys.stdin:
         self.assertIn('id="pi-mobile-archive"', html)
         self.assertIn('id="pi-language-choice"', html)
         self.assertIn('<body class="pi-page">', html)
+
+    def test_coding_projects_csrf_history_and_working_directory(self):
+        root = Path(self.temp.name).resolve()
+        self.app.config['CODING_PROJECT_ROOT'] = str(root)
+        self.assertEqual(self.client.post('/coding/api/pi/projects', json={'path': str(root), 'name': 'project'}).status_code, 403)
+        created = self.client.post('/coding/api/pi/projects', json={'path': str(root), 'name': 'project'}, headers=self.headers)
+        self.assertEqual(created.status_code, 200)
+        project = created.json['path']
+        self.assertEqual(self.client.get('/coding/api/pi/projects?path=/').status_code, 400)
+        response = self.client.post('/coding/api/pi/sessions', json={'project': project}, headers=self.headers)
+        self.assertEqual(response.status_code, 201)
+        sid = response.json['id']
+        response = self.client.post(f'/coding/api/pi/sessions/{sid}/messages', json={'message': 'hello'}, headers=self.headers)
+        self.assertIn(b'"type": "done"', response.data)
+        self.assertTrue((Path(project) / 'last-prompt.json').exists())
+        self.assertEqual(self.client.get('/api/pi/sessions').json, [])
+        self.assertEqual(len(self.client.get('/coding/api/pi/sessions').json), 1)
+        self.login(2)
+        self.assertEqual(self.client.get(f'/coding/api/pi/sessions/{sid}').status_code, 404)
 
 
 
