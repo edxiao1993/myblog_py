@@ -33,10 +33,13 @@ for line in sys.stdin:
         print(json.dumps({'type': 'agent_settled'}), flush=True)
         continue
     replies = {
+        'set_session_name': {},
         'get_available_models': {'models': [{'id': 'reasoner', 'provider': 'test', 'name': 'Test reasoner', 'reasoning': True}]},
         'get_available_thinking_levels': {'levels': ['off', 'low', 'high']},
         'get_state': {'model': {'id': 'reasoner', 'provider': 'test'}, 'thinkingLevel': 'low'},
     }
+    if cmd['type'] == 'set_session_name':
+        Path('rename-rpc.json').write_text(json.dumps(cmd))
     if cmd['type'] in replies:
         print(json.dumps({'id': cmd['id'], 'type': 'response', 'success': True, 'data': replies[cmd['type']]}), flush=True)
         continue
@@ -605,6 +608,33 @@ for line in sys.stdin:
         self.assertEqual(len(self.client.get('/coding/api/pi/sessions').json), 1)
         self.login(2)
         self.assertEqual(self.client.get(f'/coding/api/pi/sessions/{sid}').status_code, 404)
+
+    def test_coding_rename_validates_access_lock_and_persists_title(self):
+        from services.coding_service import CodingService
+        root = Path(self.temp.name).resolve()
+        self.app.config['CODING_PROJECT_ROOT'] = str(root)
+        response = self.client.post('/coding/api/pi/sessions', json={'project': str(root)}, headers=self.headers)
+        sid = response.json['id']
+        url = f'/coding/api/pi/sessions/{sid}/name'
+        self.assertEqual(self.client.post(url, json={'name': 'New name'}).status_code, 403)
+        for name in ('', ' ', 'x' * 201, None):
+            self.assertEqual(self.client.post(url, json={'name': name}, headers=self.headers).status_code, 400)
+        agent = CodingService(self.app.config)
+        path = agent.folder(User(1), sid)
+        lock = agent.acquire(path)
+        try:
+            self.assertEqual(self.client.post(url, json={'name': 'New name'}, headers=self.headers).status_code, 409)
+        finally:
+            lock.close()
+        response = self.client.post(url, json={'name': ' Project name '}, headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(agent.metadata(path)['title'], 'Project name')
+        command = json.loads((root / 'rename-rpc.json').read_text())
+        self.assertEqual(command['type'], 'set_session_name')
+        self.assertEqual(command['name'], 'Project name')
+        self.assertEqual(self.client.get('/coding/api/pi/sessions').json[0]['title'], 'Project name')
+        self.login(2)
+        self.assertEqual(self.client.post(url, json={'name': 'Other'}, headers=self.headers).status_code, 404)
 
 
 

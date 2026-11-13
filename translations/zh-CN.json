@@ -302,5 +302,11 @@
   "Choose project folder": "选择项目文件夹",
   "Browse folders": "浏览文件夹",
   "Use this folder": "使用此文件夹",
-  "Choose command": "选择命令"
+  "Choose command": "选择命令",
+  "Rename": "重命名",
+  "Rename session: {title}": "重命名会话：{title}",
+  "Session name": "会话名称",
+  "Enter a session name of 1–200 characters.": "请输入 1–200 个字符的会话名称。",
+  "Double-click to rename. Enter to save, Escape to cancel.": "双击重命名。按 Enter 保存，按 Escape 取消。",
+  "Unable to copy. Please select and copy the text manually.": "无法复制，请选中文本后手动复制。"
 }

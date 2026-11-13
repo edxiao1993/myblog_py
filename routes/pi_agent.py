@@ -367,3 +367,25 @@ def projects():
                        folders=sorted(children, key=lambda item: item['name'].lower()))
     except (ValueError, OSError, TypeError) as exc:
         return jsonify(error=_('Unable to open or create this project folder.')), 400
+
+
+@bp.post('/api/pi/sessions/<sid>/name')
+@authorized
+def rename_session(sid):
+    if request.blueprint != 'coding_agent':
+        abort(404)
+    agent = service()
+    path = folder(sid)
+    data = request.get_json(silent=True)
+    try:
+        lock = agent.acquire(path)
+    except BusyError as exc:
+        return jsonify(error=_(str(exc))), 409
+    try:
+        return jsonify(agent.rename(path, data.get('name') if isinstance(data, dict) else None))
+    except ValueError as exc:
+        return jsonify(error=_(str(exc))), 400
+    except (OSError, RuntimeError) as exc:
+        return jsonify(error=_(str(exc))), 503
+    finally:
+        lock.close()

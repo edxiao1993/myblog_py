@@ -1,9 +1,10 @@
 {% extends 'base.html' %}
 {% block content %}
 <style>
-.coding-layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:1rem}.coding-chat{min-width:0}#coding-messages{height:65vh;overflow:auto;overflow-wrap:anywhere}#coding-messages pre{white-space:pre-wrap;margin:0}#coding-folders{max-height:35vh;overflow:auto}#coding-history{max-height:65vh;overflow:auto}.coding-controls{display:flex;gap:.5rem;align-items:end}.coding-controls label{flex:1;min-width:0}.coding-controls select{width:100%;min-width:0;text-overflow:ellipsis}#coding-directory-dialog{width:min(560px,calc(100vw - 2rem));max-height:85vh;overflow:auto;border:0;border-radius:.75rem;padding:1.5rem}#coding-directory-dialog::backdrop{background:rgba(0,0,0,.45)}@media(max-width:767px){.coding-layout{grid-template-columns:1fr}#coding-history{max-height:18vh}.coding-controls{flex-wrap:wrap}.coding-controls label{flex:1 1 120px}#coding-messages{height:60vh}}
+.coding-layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:1rem}.coding-chat{min-width:0}#coding-messages{height:65vh;overflow:auto;overflow-wrap:anywhere}#coding-messages pre{white-space:pre-wrap;margin:0}#coding-folders{max-height:35vh;overflow:auto}#coding-history{max-height:65vh;overflow:auto}.coding-controls{display:flex;gap:.5rem;align-items:end}.coding-controls label{flex:1;min-width:0}.coding-controls select{width:100%;min-width:0;text-overflow:ellipsis}#coding-directory-dialog{width:min(560px,calc(100vw - 2rem));max-height:85vh;overflow:auto;border:0;border-radius:.75rem;padding:1.5rem}#coding-directory-dialog::backdrop{background:rgba(0,0,0,.45)}@media(max-width:767px){.coding-layout{grid-template-columns:1fr}.coding-layout>aside,.coding-chat>.coding-controls{display:none}#coding-messages{height:60vh}}
 #coding-messages .coding-user-message{align-self:flex-end;margin-left:auto;width:fit-content;max-width:85%;min-width:0;flex-shrink:0;background-color:#e7f3ff;color:#16324f;border-color:#c6e2ff!important}
 #coding-messages .coding-markdown>:last-child{margin-bottom:0}#coding-messages .coding-markdown pre{white-space:pre;overflow-x:auto;padding:.75rem;background:rgba(127,127,127,.1);border-radius:.375rem}#coding-messages .coding-markdown table{display:block;max-width:100%;overflow-x:auto}#coding-messages .coding-markdown th,#coding-messages .coding-markdown td{padding:.375rem;border:1px solid #adb5bd}#coding-messages .coding-markdown img{max-width:100%;height:auto}
+#coding-messages .coding-copy{display:block;margin-left:auto;min-height:18px;padding:1px 4px;font-size:.65rem;line-height:1.2}
 </style>
 <div id="coding-app" data-csrf="{{ csrf }}" class="container py-3">
 <div class="coding-layout">
@@ -33,5 +34,5 @@
 </dialog></div>
 <script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/purify.min.js') }}"></script>
-<script src="{{ url_for('static', filename='js/coding-agent.js', v='20261112-append-messages') }}" defer></script>
+<script src="{{ url_for('static', filename='js/coding-agent.js', v='20261113-copy-collapse') }}" defer></script>
 {% endblock %}

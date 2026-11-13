@@ -131,11 +131,13 @@ class PiService:
         if process.stderr is not None:
             process.stderr.close()
 
-    def options(self, login_name, model='', project=None):
+    def options(self, login_name, model='', project=None, session_path=None, session_name=None):
         if not isinstance(model, str) or len(model) > 300 or (model and ('/' not in model or not all(model.split('/', 1)))):
             raise ValueError('Invalid model selection.')
         agent_event('options.started')
-        args = [self.config['PI_EXECUTABLE'], '--mode', 'rpc', '--no-session'] + self.model_args(model)
+        args = [self.config['PI_EXECUTABLE'], '--mode', 'rpc']
+        args += ['--session', str(session_path)] if session_path else ['--no-session']
+        args += self.model_args(model)
         process = subprocess.Popen(args, cwd=project or self.workspace(login_name), stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
         selector = selectors.DefaultSelector()
@@ -143,9 +145,9 @@ class PiService:
         pending = b''
         deadline = time.monotonic() + 15
 
-        def query(command):
+        def query(command, **fields):
             nonlocal pending
-            process.stdin.write((json.dumps({'id': command, 'type': command}) + '\n').encode())
+            process.stdin.write((json.dumps({'id': command, 'type': command, **fields}) + '\n').encode())
             process.stdin.flush()
             while time.monotonic() < deadline:
                 while b'\n' in pending:
@@ -167,6 +169,8 @@ class PiService:
             raise RuntimeError('Pi timed out while loading model settings.')
 
         try:
+            if session_name is not None:
+                return query('set_session_name', name=session_name)
             models = query('get_available_models').get('models', [])
             levels = query('get_available_thinking_levels').get('levels', ['off'])
             state = query('get_state')

@@ -96,3 +96,14 @@ class CodingService(PiService):
                 except (OSError, ValueError, KeyError, TypeError):
                     # Ignore incomplete or incompatible sessions without hiding valid history.
                     continue
+
+    def rename(self, folder, name):
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 200:
+            raise ValueError('Enter a session name of 1–200 characters.')
+        name = name.strip()
+        self.options(folder.parent.name, project=self.working_directory(folder),
+                     session_path=folder / 'session.jsonl', session_name=name)
+        metadata = self.metadata(folder)
+        metadata['title'] = name
+        self.write_metadata(folder, metadata)
+        return metadata

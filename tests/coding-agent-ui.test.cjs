@@ -3,18 +3,22 @@ const assert = require('node:assert/strict');
 const {readFileSync} = require('node:fs');
 const vm = require('node:vm');
 class Element {
-  constructor(tag) { this.tagName = tag; this.children = []; this.textContent = ''; this.dataset = {}; this.value = ''; }
+  constructor(tag) { this.tagName = tag; this.children = []; this.textContent = ''; this.dataset = {}; this.value = ''; this.style = {}; }
+  focus() {}
+  select() {}
+  setAttribute(name,value) { this[name] = value; }
   append(...nodes) { nodes.forEach(node => {node.parentElement = this; this.children.push(node);}); }
   replaceWith(node) { const p = this.parentElement; p.children[p.children.indexOf(this)] = node; node.parentElement = p; }
-  replaceChildren() { this.children = []; }
+  replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
 }
 function setup(fetch) {
-  const elements = new Map();
+  const elements = new Map(), copied = [];
+  const clipboard = {writeText:async text => {copied.push(text);}};
   const get = id => { if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id); };
-  const context = {fetch, TextDecoder, marked:require('../static/js/marked.min.js'), DOMPurify:{sanitize:html => 'sanitized:' + html}, document: {getElementById:get, querySelectorAll:() => [], createElement:tag => new Element(tag)}, window:{AppI18n:{t:(s,v) => s.replace('{count}',v?.count)}}};
+  const context = {fetch, navigator:{clipboard}, TextDecoder, setTimeout, clearTimeout, marked:require('../static/js/marked.min.js'), DOMPurify:{sanitize:html => 'sanitized:' + html}, document: {getElementById:get, querySelectorAll:() => [], createElement:tag => new Element(tag)}, window:{AppI18n:{t:(s,v) => s.replace('{count}',v?.count)}}};
   vm.createContext(context);
-  vm.runInContext(readFileSync('static/js/coding-agent.js','utf8').replace("  run(() => browse(''))();", '  window.test = {tool, render, newTurn, browse, updateMarkdown, send};'),context);
-  return {ui:context.window.test, get, messages:get('coding-messages')};
+  vm.runInContext(readFileSync('static/js/coding-agent.js','utf8').replace("  run(() => browse(''))();", '  window.test = {tool, render, newTurn, browse, updateMarkdown, send, thinking};'),context);
+  return {copied, clipboard, ui:context.window.test, window:context.window, get, messages:get('coding-messages')};
 }
 test('eleventh tool groups calls and preserves arguments and output', () => {
   const {ui,messages} = setup();
@@ -49,7 +53,7 @@ test('selected path loads its history even when Pi options fail', async () => {
   });
   await assert.rejects(ui.browse('/home/dev/project'), /Options unavailable/);
   assert.match(urls[1], /sessions\?project=%2Fhome%2Fdev%2Fproject/);
-  assert.equal(get('coding-history').children[0].textContent,'Existing Pi history');
+  assert.equal(get('coding-history').children[0].children[0].textContent,'Existing Pi history');
   assert.equal(get('coding-project-name').textContent,'/home/dev/project');
   let selected = false, prevented = false;
   get('coding-select').onclick = () => {selected = true;};
@@ -181,4 +185,97 @@ test('running tasks accept one append request, retain newer drafts, and render f
   releaseStream(); await task;
   assert.equal(messages.children.length,3);
   assert.equal(get('coding-message').value,'new draft');
+});
+
+test('history titles rename inline on double-click with Enter and cancel with Escape', async () => {
+  let title = 'Original', writes = 0;
+  const {ui,get} = setup(async (url, request) => {
+    if (url.includes('/options')) throw new Error('Options unavailable');
+    if (url.endsWith('/name')) { title = JSON.parse(request.body).name; writes++; return {ok:true,json:async () => ({title})}; }
+    return {ok:true,json:async () => url.includes('/projects') ? {path:'/home/dev/project',folders:[]} : [{id:'saved',project:'/home/dev/project',title}]};
+  });
+  await assert.rejects(ui.browse('/home/dev/project'), /Options unavailable/);
+  const row = get('coding-history').children[0], button = row.children[0];
+  assert.equal(row.children.length,1);
+  button.ondblclick();
+  let input = row.children[1];
+  assert.equal(input.tagName,'input');
+  input.value = 'Discard';
+  input.onkeydown({key:'Escape',preventDefault(){}});
+  assert.equal(writes,0);
+  assert.equal(row.children.length,1);
+  button.ondblclick(); input = row.children[1]; input.value = 'Renamed';
+  await input.onkeydown({key:'Enter',preventDefault(){}});
+  assert.equal(writes,1);
+  assert.equal(button.textContent,'Renamed');
+  assert.equal(row.children.length,1);
+  button.onpointerup({pointerType:'touch'});
+  button.onpointerup({pointerType:'touch'});
+  input = row.children[1];
+  assert.equal(input.tagName,'input');
+  input.onkeydown({key:'Escape',preventDefault(){}});
+  button.onkeydown({key:'F2',preventDefault(){}});
+  input = row.children[1]; input.value = 'Saved on blur';
+  await input.onblur();
+  assert.equal(writes,2);
+  assert.equal(button.textContent,'Saved on blur');
+
+});
+
+test('thinking shares the tool group and counts toward its collapse threshold', () => {
+  const {ui,messages} = setup();
+  ui.render({role:'assistant',content:[{type:'thinking',thinking:'Reasoning <script>'},...Array.from({length:10},(_,i)=>({type:'toolCall',id:String(i),name:'read',arguments:{}}))]});
+  assert.equal(messages.children.length,1);
+  const group = messages.children[0];
+  assert.equal(group.tagName,'details');
+  assert.equal(group.children[0].textContent,'Tool calls (11)');
+  assert.equal(group.children[1].children.length,11);
+  assert.equal(group.children[1].children[0].children[1].textContent,'Reasoning <script>');
+});
+
+test('thinking deltas and final saved blocks update the same tool card', () => {
+  const {ui,messages} = setup();
+  ui.thinking(0,'First ',true);
+  ui.thinking(0,'thought',true);
+  const card = messages.children[0].children[0];
+  assert.equal(card.children[1].textContent,'First thought');
+  ui.render({role:'assistant',content:[{type:'thinking',thinking:'Final thought'}]},true);
+  assert.equal(messages.children[0].children.length,1);
+  assert.equal(card.children[1].textContent,'Final thought');
+  ui.render({role:'assistant',content:[{type:'thinking',thinking:'Next thought'}]});
+  assert.equal(messages.children[0].children.length,2);
+});
+
+test('expanded tool cards collapse on double-click and copy their latest text', async () => {
+  const {ui,messages,copied,clipboard,get} = setup();
+  ui.tool('tool','read','arguments');
+  const card = messages.children[0].children[0];
+  card.open = true;
+  let stopped = false;
+  card.ondblclick({target:{closest:selector => selector === 'details' ? card : null},stopPropagation(){stopped = true;}});
+  assert.equal(card.open,false); assert.equal(stopped,true);
+  card.open = true;
+  card.ondblclick({target:{closest:selector => selector === 'details' ? card : {}},stopPropagation(){}});
+  assert.equal(card.open,true);
+  ui.tool('tool','read','output');
+  await card.children[2].onclick({stopPropagation(){}});
+  assert.deepEqual(copied,['arguments\n\noutput']);
+  ui.render({role:'assistant',content:'**Markdown**'});
+  await messages.children[1].children[2].onclick({stopPropagation(){}});
+  assert.equal(copied[1],'**Markdown**');
+  clipboard.writeText = async () => {throw new Error('denied');};
+  await card.children[2].onclick({stopPropagation(){}});
+  assert.match(get('coding-status').textContent,/Unable to copy/);
+});
+
+test('grouped thinking and tools can be copied together and collapsed', async () => {
+  const {ui,messages,copied} = setup();
+  ui.thinking(0,'Reasoning');
+  for (let i=0;i<10;i++) ui.tool(String(i),'read','output '+i);
+  const wrapper = messages.children[0];
+  wrapper.open = true;
+  wrapper.ondblclick({target:{closest:selector => selector === 'details' ? wrapper : null},stopPropagation(){}});
+  assert.equal(wrapper.open,false);
+  await wrapper.children[2].onclick({stopPropagation(){}});
+  assert.match(copied[0],/Reasoning/); assert.match(copied[0],/output 9/);
 });
