@@ -320,6 +320,7 @@
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
                         </button>
                         <div class="dropdown-menu dropdown-menu-end shadow-sm">
+                            <div class="px-3">{% with theme_toggle_id='pi-mobile-theme' %}{% include 'theme_toggle.html' %}{% endwith %}</div>
                             <button class="dropdown-item" type="button" data-bs-toggle="collapse" data-bs-target="#pi-settings-collapse" aria-controls="pi-settings-collapse" aria-expanded="false">{{ _('Settings') }}</button>
                             <button class="dropdown-item" type="button" data-bs-toggle="collapse" data-bs-target="#pi-files-collapse" aria-controls="pi-files-collapse" aria-expanded="false">{{ _('📁 Conversation Files') }}</button>
                             <button id="pi-mobile-archive" class="dropdown-item" type="button">{{ _('Save archive snapshot') }}</button>

@@ -11,14 +11,16 @@ class Element {
   replaceWith(node) { const p = this.parentElement; p.children[p.children.indexOf(this)] = node; node.parentElement = p; }
   replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
 }
-function setup(fetch) {
+function setup(fetch, storedProject = null) {
+  const stored = new Map();
+  if (storedProject) stored.set('coding-agent-project-default', storedProject);
   const elements = new Map(), copied = [];
   const clipboard = {writeText:async text => {copied.push(text);}};
   const get = id => { if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id); };
-  const context = {fetch, navigator:{clipboard}, TextDecoder, setTimeout, clearTimeout, marked:require('../static/js/marked.min.js'), DOMPurify:{sanitize:html => 'sanitized:' + html}, document: {getElementById:get, querySelectorAll:() => [], createElement:tag => new Element(tag)}, window:{AppI18n:{t:(s,v) => s.replace('{count}',v?.count)}}};
+  const context = {fetch, localStorage:{getItem:key => stored.get(key) ?? null,setItem:(key,value) => stored.set(key,value)}, navigator:{clipboard}, TextDecoder, setTimeout, clearTimeout, marked:require('../static/js/marked.min.js'), DOMPurify:{sanitize:html => 'sanitized:' + html}, document: {getElementById:get, querySelectorAll:() => [], createElement:tag => new Element(tag)}, window:{AppI18n:{t:(s,v) => s.replace('{count}',v?.count)}}};
   vm.createContext(context);
-  vm.runInContext(readFileSync('static/js/coding-agent.js','utf8').replace("  run(() => browse(''))();", '  window.test = {tool, render, newTurn, browse, updateMarkdown, send, thinking};'),context);
-  return {copied, clipboard, ui:context.window.test, window:context.window, get, messages:get('coding-messages')};
+  vm.runInContext(readFileSync('static/js/coding-agent.js','utf8').replace("  initialize().catch(report);", '  window.test = {tool, render, newTurn, browse, updateMarkdown, send, thinking, initialize};'),context);
+  return {stored, copied, clipboard, ui:context.window.test, window:context.window, get, messages:get('coding-messages')};
 }
 test('eleventh tool groups calls and preserves arguments and output', () => {
   const {ui,messages} = setup();
@@ -278,4 +280,34 @@ test('grouped thinking and tools can be copied together and collapsed', async ()
   assert.equal(wrapper.open,false);
   await wrapper.children[2].onclick({stopPropagation(){}});
   assert.match(copied[0],/Reasoning/); assert.match(copied[0],/output 9/);
+});
+
+test('history opens even when loading saved model options fails', async () => {
+  const {ui,get,messages} = setup(async url => {
+    if (url.includes('/options')) throw new Error('Options unavailable');
+    const data = url.includes('/projects') ? {path:'/home/dev/project',folders:[]} : url.endsWith('/detail') ? {session:{settings:{model:'old/model',thinking:'high'}},messages:[{role:'user',content:'Saved question'},{role:'assistant',content:'Saved answer'}]} : [{id:'saved',project:'/home/dev/project',title:'History'}];
+    return {ok:true,json:async () => data};
+  });
+  await assert.rejects(ui.browse('/home/dev/project'), /Options unavailable/);
+  await get('coding-history').children[0].children[0].onclick({detail:0});
+  assert.equal(messages.children.length,2);
+  assert.equal(messages.children[1].children[1].dataset.markdown,'Saved answer');
+});
+
+test('reload restores the selected project and its history', async () => {
+  const requested = [];
+  const fetch = async url => {
+    requested.push(url);
+    if (url.includes('/options')) throw new Error('Options unavailable');
+    return {ok:true,json:async () => url.includes('/projects') ? {path:'/home/dev/new-project',folders:[]} : [{id:'saved',project:'/home/dev/new-project',title:'New project chat'}]};
+  };
+  const first = setup(fetch);
+  await assert.rejects(first.ui.browse('/home/dev/new-project'),/Options unavailable/);
+  const saved = first.stored.get('coding-agent-project-default');
+  assert.equal(saved,'/home/dev/new-project');
+  requested.length = 0;
+  const reloaded = setup(fetch,saved);
+  await assert.rejects(reloaded.ui.initialize(),/Options unavailable/);
+  assert.match(requested[0],/path=%2Fhome%2Fdev%2Fnew-project/);
+  assert.equal(reloaded.get('coding-history').children[0].children[0].textContent,'New project chat');
 });

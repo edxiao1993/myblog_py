@@ -3,6 +3,7 @@
   const t = (s, values) => window.AppI18n.t(s, values);
   let directory = '', project = '', sid = '', busy = false, running = false, appending = false, calls = new Map(), group = null, summary = null;
   let thinkingBlocks = new Map();
+  const projectKey = 'coding-agent-project-' + (el('app').dataset.userId || 'default');
   marked.setOptions({gfm: true, breaks: true});
   const settings = () => ({model: el('model').value, thinking: el('thinking').value, prompt: 'pi'});
   async function api(path, data) {
@@ -108,7 +109,7 @@
   async function history() {
     const sessions = await (await api('/sessions?project=' + encodeURIComponent(project))).json(); el('history').replaceChildren();
     for (const item of sessions.filter(item => item.project === project)) {
-      const button = document.createElement('button'); button.className = 'btn btn-outline-secondary flex-grow-1 text-start text-break'; button.style.minWidth = '0'; button.textContent = item.title;
+      const button = document.createElement('button'); button.className = 'btn btn-sm btn-outline-secondary flex-grow-1 text-start text-break'; button.style.minWidth = '0'; button.textContent = item.title;
       const row = document.createElement('div'); row.className = 'd-flex mb-1'; row.append(button); el('history').append(row);
       let clickTimer, editing = false, lastTap = 0;
       const open = run(async () => {
@@ -116,8 +117,8 @@
         setBusy(true);
         try {
           const detail = await (await api('/sessions/' + item.id + '/detail')).json();
-          await options(detail.session.settings.model, detail.session.settings.thinking);
           sid = item.id; el('messages').replaceChildren(); newTurn(); detail.messages.forEach(render);
+          await options(detail.session.settings.model, detail.session.settings.thinking);
         } finally { setBusy(false); }
       });
       const rename = () => {
@@ -187,7 +188,9 @@
     if (directory === project) { await history(); return; }
     setBusy(true);
     try {
-      project = directory; sid = ''; el('project-name').textContent = project; el('project-name').title = project;
+      project = directory; sid = '';
+      try { localStorage.setItem(projectKey, project); } catch (_) { /* Storage can be unavailable. */ }
+      el('project-name').textContent = project; el('project-name').title = project;
       el('messages').replaceChildren(); newTurn();
       await history(); await options();
     } finally { setBusy(false); }
@@ -208,7 +211,10 @@
     }
     setBusy(true); el('status').textContent = t('Working…');
     try {
-      if (!sid) sid = (await (await api('/sessions', {...settings(), project})).json()).id;
+      if (!sid) {
+        sid = (await (await api('/sessions', {...settings(), project})).json()).id;
+        await history(); setBusy(true);
+      }
       newTurn(); messageCard('user', message);
       const response = await api('/sessions/' + sid + '/messages', {message, settings: settings()});
       running = true; setBusy(true);
@@ -267,5 +273,12 @@
     } else await send('/' + command);
   });
   el('stop').onclick = run(async () => { await api('/sessions/' + sid + '/stop', {}); running = false; setBusy(busy); });
-  run(() => browse(''))();
+  async function initialize() {
+    let saved = '';
+    try { saved = localStorage.getItem(projectKey) || ''; } catch (_) { /* Storage can be unavailable. */ }
+    try { await loadDirectory(saved); }
+    catch (error) { if (!saved) throw error; await loadDirectory(''); }
+    await selectProject();
+  }
+  initialize().catch(report);
 })();

@@ -44,16 +44,39 @@ class LanguageTests(unittest.TestCase):
             token = session['language_csrf']
         return self.client.post('/language', data={'language': language, 'csrf_token': token, 'next': next_page})
 
+    def test_shared_theme_is_available_on_all_pages_in_both_languages(self):
+        pages = ['index', 'post', 'create', 'moments', 'add_moment', 'login', 'register', 'ai_sessions', 'ai_session_detail', 'pi_agent', 'coding_agent']
+        for language in ('en', 'zh-CN'):
+            self.client.set_cookie('language', language)
+            for page in pages:
+                with self.subTest(language=language, page=page):
+                    body = self.client.get('/preview/' + page).get_data(as_text=True)
+                    self.assertEqual(body.count('id="app-theme"'), 1)
+                    self.assertIn('js/theme.js', body)
+                    self.assertIn('css/theme.css', body)
+                    self.assertNotIn('js/coding-theme.js', body)
+                    self.assertIn('aria-label="' + ('夜间模式' if language == 'zh-CN' else 'Night view') + '"', body)
+                    if page == 'pi_agent':
+                        self.assertIn('id="pi-mobile-theme"', body)
+
     def test_coding_page_languages_and_mobile_layout(self):
         for language, label in [('en', 'Project folder'), ('zh-CN', '项目文件夹')]:
             self.client.set_cookie('language', language)
             body = self.client.get('/preview/coding_agent').get_data(as_text=True)
             self.assertIn(label, body)
             self.assertIn('@media(max-width:767px)', body)
-            self.assertIn('body[data-coding-theme="dark"]', body)
-            self.assertIn('#coding-messages .coding-user-message { background:#1e3a5f', body)
             self.assertIn('夜间模式' if language == 'zh-CN' else 'Night view', body)
-            self.assertIn('id="coding-theme"', body)
+            self.assertIn('id="app-theme"', body)
+            navbar = body.split('<div id="coding-app"')[0]
+            self.assertIn('id="app-theme"', navbar)
+            self.assertIn('☀', navbar)
+            self.assertIn('☾', navbar)
+            self.assertIn('aria-label="' + ('夜间模式' if language == 'zh-CN' else 'Night view') + '"', navbar)
+            self.assertNotIn('coding-sidebar-toggle', body)
+            self.assertNotIn('coding-sidebar-show', body)
+            self.assertNotIn('data-sidebar-hidden', body)
+            self.assertIn('grid-template-columns:190px minmax(0,1fr)', body)
+            self.assertIn('id="coding-sidebar" class="card p-2"', body)
             self.assertNotIn('custom-prompt', body)
             self.assertIn('<dialog id="coding-directory-dialog"', body)
             self.assertNotIn('id="coding-path"', body.split('</aside>')[0])

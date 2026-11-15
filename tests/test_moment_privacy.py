@@ -29,7 +29,7 @@ class MomentPrivacyTests(unittest.TestCase):
         self.app.register_blueprint(moments_bp, url_prefix='/moments')
         self.app.register_blueprint(api_bp, url_prefix='/api')
         for endpoint in ['main.index', 'ai_sessions.sessions_list',
-                         'pi_agent.page', 'auth.logout']:
+                         'pi_agent.page', 'coding_agent.page', 'auth.logout']:
             self.app.add_url_rule('/test/' + endpoint, endpoint, lambda: '')
         self.context = self.app.app_context()
         self.context.push()

@@ -232,6 +232,8 @@
         }
     </style>
     {% block head_extra %}{% endblock %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css', v='20261115') }}">
+    <script src="{{ url_for('static', filename='js/theme.js', v='20261115') }}"></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
     <nav class="navbar navbar-expand-lg navbar-dark sticky-top">
@@ -263,6 +265,7 @@
                         </select>
                     </div>
                 </form>
+                {% block navbar_controls %}{% include 'theme_toggle.html' %}{% endblock %}
                 <div class="navbar-nav align-items-lg-center">
                     {% if current_user.is_authenticated %}
                         <span class="navbar-text me-lg-3 small text-light">{{ _('Hello, {username}!', username=current_user.username) }}</span>

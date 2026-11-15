@@ -358,6 +358,8 @@ def projects():
         root = agent.project()
         children = []
         for child in path.iterdir():
+            if child.name.startswith('.'):
+                continue
             try:
                 resolved = agent.project(str(child))
                 children.append({'name': child.name, 'path': str(resolved)})

@@ -14,7 +14,7 @@ class CodingTests(unittest.TestCase):
         self.project = self.root / 'projects'
         self.project.mkdir()
         self.agent = CodingService({'PI_DATA_DIR': str(self.root / 'data'),
-            'CODING_PROJECT_ROOT': str(self.project), 'PI_WORKSPACE': str(self.root / 'workspace'),
+            'CODING_PROJECT_ROOT': str(self.project), 'CODING_PI_AGENT_DIR': str(self.root / 'agent'), 'PI_WORKSPACE': str(self.root / 'workspace'),
             'PI_SYSTEM_PROMPT_FILE': str(Path('config/pi-system-prompt.txt').resolve())})
         self.user = SimpleNamespace(id=1, username='first')
 
@@ -81,3 +81,19 @@ class CodingTests(unittest.TestCase):
         (sessions / 'broken.jsonl').write_text('{invalid')
         self.agent.import_native(self.user, str(self.project))
         self.assertEqual(len(self.agent.list(self.user)), 1)
+
+    def test_web_history_is_discoverable_without_duplicate_or_cross_user_import(self):
+        metadata = self.agent.create(self.user, {'project': str(self.project)})
+        folder = self.agent.folder(self.user, metadata['id'])
+        raw = json.dumps({'type': 'session', 'cwd': str(self.project), 'id': 'test'}) + '\n'
+        (folder / 'session.jsonl').write_text(raw)
+        self.agent.import_native(self.user, str(self.project))
+        files = list((self.root / 'agent/sessions').rglob('*.jsonl'))
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0].resolve(), folder / 'session.jsonl')
+        self.assertEqual(files[0].read_text(), raw)
+        self.agent.import_native(self.user, str(self.project))
+        self.assertEqual(len(self.agent.list(self.user)), 1)
+        other = SimpleNamespace(id=2, username='second')
+        self.agent.import_native(other, str(self.project))
+        self.assertEqual(self.agent.list(other), [])

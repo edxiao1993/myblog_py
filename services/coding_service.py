@@ -1,6 +1,7 @@
 """Project-backed Pi sessions with private web history."""
 import fcntl
 import json
+import logging
 import os
 import re
 import uuid
@@ -33,11 +34,41 @@ class CodingService(PiService):
     def settings(self, user, data, previous=None, has_messages=False):
         return super().settings(user, {**data, 'prompt': 'pi'}, previous, has_messages)
 
-    def import_native(self, user, project):
-        project = self.project(project)
+    def native_directory(self, project):
         agent_dir = Path(self.config.get('CODING_PI_AGENT_DIR') or os.environ.get('PI_CODING_AGENT_DIR') or Path.home() / '.pi/agent').expanduser()
         encoded = '--' + re.sub(r'[/\\:]', '-', str(project).lstrip('/\\')) + '--'
-        session_dir = agent_dir / 'sessions' / encoded
+        return agent_dir / 'sessions' / encoded
+
+    def publish_session(self, folder):
+        source = folder / 'session.jsonl'
+        if not source.is_file():
+            return
+        directory = self.native_directory(self.working_directory(folder))
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        destination = directory / ('web-' + uuid.uuid5(uuid.NAMESPACE_URL, str(folder)).hex + '.jsonl')
+        try:
+            destination.symlink_to(source)
+        except FileExistsError:
+            pass
+
+    def run(self, folder, *args, **kwargs):
+        for event in super().run(folder, *args, **kwargs):
+            if event.get('type') == 'done':
+                try:
+                    self.publish_session(folder)
+                except OSError:
+                    logging.getLogger(__name__).warning('Could not publish Pi session for terminal discovery', exc_info=True)
+            yield event
+
+    def import_native(self, user, project):
+        project = self.project(project)
+        for metadata in self.list(user):
+            if metadata.get('project') == str(project):
+                try:
+                    self.publish_session(self.folder(user, metadata['id']))
+                except OSError:
+                    logging.getLogger(__name__).warning('Could not publish Pi session for terminal discovery', exc_info=True)
+        session_dir = self.native_directory(project)
         if not session_dir.is_dir():
             return
         root = self.user_root(user)

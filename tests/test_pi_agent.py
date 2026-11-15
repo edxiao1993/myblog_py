@@ -590,6 +590,19 @@ for line in sys.stdin:
         self.assertIn('id="pi-language-choice"', html)
         self.assertIn('<body class="pi-page">', html)
 
+    def test_coding_project_picker_hides_dot_folders(self):
+        root = Path(self.temp.name).resolve()
+        self.app.config['CODING_PROJECT_ROOT'] = str(root)
+        (root / '.hidden').mkdir()
+        (root / 'visible').mkdir()
+        (root / 'project.with.dots').mkdir()
+        response = self.client.get('/coding/api/pi/projects', query_string={'path': str(root)})
+        self.assertEqual(response.status_code, 200)
+        names = [item['name'] for item in response.json['folders']]
+        self.assertNotIn('.hidden', names)
+        self.assertIn('visible', names)
+        self.assertIn('project.with.dots', names)
+
     def test_coding_projects_csrf_history_and_working_directory(self):
         root = Path(self.temp.name).resolve()
         self.app.config['CODING_PROJECT_ROOT'] = str(root)
