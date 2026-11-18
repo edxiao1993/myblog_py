@@ -5,6 +5,9 @@
 - Make the smallest change that solves the request. Avoid unrelated refactoring,
   new dependencies, and speculative features.
 - Preserve existing user changes.
+- If modify the code file, always check if the current branch is main.
+  if the current branch is main, ask the user if he want to create a new branch to
+  implement the plan
 
 # Project Conventions
 
