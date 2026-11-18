@@ -59,6 +59,8 @@
   "Confirm Deletion": "确认删除",
   "Are you sure you want to delete this secret moment?": "确定要删除这条私密动态吗？",
   "Moments pagination": "动态分页",
+  "Show more": "展开全文",
+  "Show less": "收起全文",
   "Previous": "上一页",
   "Next": "下一页",
   "No secret moments yet.": "暂无私密动态。",

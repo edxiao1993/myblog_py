@@ -28,8 +28,9 @@
                         </button>
                     </div>
 
-                    <div class="text-secondary my-2" style="font-size: 1.05rem; line-height: 1.7; word-break: break-word;">
-                        {{ moment.moment|replace('\n', '<br>')|safe }}
+                    <div class="text-secondary my-2" data-moment-content style="font-size: 1.05rem; line-height: 1.7; word-break: break-word;">
+                        <div id="moment-content-{{ moment.id }}" data-moment-full style="white-space: pre-wrap;">{{ moment.moment }}</div>
+                        <button type="button" class="btn btn-link px-0 py-2" data-moment-toggle aria-expanded="false" aria-controls="moment-content-{{ moment.id }}" hidden>{{ _('Show more') }}</button>
                     </div>
                 </div>
 
@@ -113,4 +114,5 @@
         </div>
     {% endif %}
 </div>
+<script src="{{ url_for('static', filename='js/moments.js') }}" defer></script>
 {% endblock %}

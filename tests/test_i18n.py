@@ -163,12 +163,43 @@ class LanguageTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         literal = r"(?:'(?:\\.|[^'\\])*')|(?:\"(?:\\.|[^\"\\])*\")"
         pattern = re.compile(r"(?<![\w])(?:_|t|status)\(\s*(" + literal + r")")
-        for path in [*root.joinpath('templates').glob('*.html'), root / 'static/js/pi-agent.js']:
+        for path in [*root.joinpath('templates').glob('*.html'), root / 'static/js/pi-agent.js', root / 'static/js/moments.js']:
             for match in pattern.finditer(path.read_text()):
                 key = ast.literal_eval(match[1])
                 self.assertIn(key, ZH_CN, f'Missing Chinese translation: {path.name}: {key}')
         for key, value in ZH_CN.items():
             self.assertEqual(set(re.findall(r'\{(\w+)\}', key)), set(re.findall(r'\{(\w+)\}', value)), key)
+
+    def test_moments_render_for_line_measurement_and_escape_content(self):
+        from datetime import datetime
+        from types import SimpleNamespace
+
+        self.app.add_url_rule('/test/delete/<id>', 'moments.delete_moment', lambda id: '')
+
+        @self.app.get('/moment-preview/<int:count>')
+        def moment_preview(count):
+            return render_template('moments.html',
+                moments=[SimpleNamespace(id='test', create_time=datetime(2026, 1, 1),
+                    moment=('word\n' * (count - 1)) + '<script>alert(1)</script>')],
+                pagination=SimpleNamespace(pages=1))
+
+        for language, label in [('en', 'Show more'), ('zh-CN', '展开全文')]:
+            self.client.set_cookie('language', language)
+            for count in (1, 5, 6, 201):
+                with self.subTest(language=language, count=count):
+                    body = self.client.get(f'/moment-preview/{count}').get_data(as_text=True)
+                    self.assertIn('&lt;script&gt;alert(1)&lt;/script&gt;', body)
+                    self.assertNotIn('<script>alert(1)</script>', body)
+                    self.assertIn('white-space: pre-wrap;', body)
+                    self.assertIn('word-break: break-word;', body)
+                    self.assertIn('js/moments.js', body)
+                    self.assertIn('data-moment-toggle', body)
+                    self.assertIn('aria-expanded="false"', body)
+                    self.assertIn('aria-controls="moment-content-test" hidden', body)
+                    self.assertIn('>' + label + '</button>', body)
+                    self.assertNotIn('data-moment-preview', body)
+                    self.assertNotIn('pre-wrap;" hidden', body)
+                    self.assertEqual(body.count('word\n'), count - 1)
 
     def test_interface_language_does_not_translate_user_content(self):
         self.switch('zh-CN')
