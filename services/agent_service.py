@@ -2,6 +2,7 @@ import atexit
 import fcntl
 import hashlib
 import os
+import re
 import signal
 import tempfile
 from functools import wraps
@@ -13,6 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from services.pi_service import BusyError, PiService
+from services.agent_backend import AgentBackend
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,7 @@ def _atomic_write(path, text):
 def _serialize_requests(method):
     @wraps(method)
     def wrapped(self, user, *args, **kwargs):
-        path = self.pi_service.user_root(user) / '.api-request.lock'
+        path = self.pi_service.request_root(user) / '.api-request.lock'
         with path.open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
@@ -90,7 +92,7 @@ def iso_now():
 
 def to_iso(ts):
     if isinstance(ts, (int, float)):
-        return datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        return datetime.fromtimestamp(ts / 1000 if ts > 100000000000 else ts, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     if isinstance(ts, str):
         return ts
     return iso_now()
@@ -153,7 +155,7 @@ class UnauthorizedError(AgentAPIError):
 class AgentService:
     def __init__(self, config):
         self.config = config
-        self.pi_service = PiService(config)
+        self.pi_service = AgentBackend(config)
 
     def _read_idempotency(self, file_path):
         if not file_path.is_file():
@@ -196,71 +198,100 @@ class AgentService:
         }
         self._write_idempotency(file_path, records)
 
-    def get_config(self, user):
-        login_name = PiService.login_folder(user.username)
+    def get_config(self, user, working_directory_id=None):
+        if working_directory_id is not None and not isinstance(working_directory_id, str):
+            raise InvalidSettingsError('Invalid working_directory_id.')
         try:
-            opts = self.pi_service.options(login_name)
+            choice, choices = self.pi_service.project_context(user, working_directory_id)
+        except ValueError as exc:
+            if str(exc) == 'Invalid working_directory_id.':
+                raise InvalidSettingsError(str(exc)) from None
+            return self._unavailable_config()
+        except (OSError, KeyError, TypeError):
+            return self._unavailable_config()
+        try:
+            opts = self.pi_service.options(PiService.login_folder(user.username),
+                                           project=choice['path'], include_commands=False)
+            models = []
+            for model in opts.get('models', []):
+                model_id = model['provider'] + '/' + model['id']
+                selected = opts
+                if model.get('reasoning') and model_id != opts.get('current_model'):
+                    selected = self.pi_service.options(PiService.login_folder(user.username), model_id,
+                        project=choice['path'], include_commands=False)
+                levels = selected.get('levels', []) if model.get('reasoning') else []
+                level = selected.get('current_thinking')
+                models.append({'id': model_id, 'name': model.get('name') or model_id,
+                    'thinking_levels': levels,
+                    'default_thinking_level': level if level in levels else levels[0] if levels else None})
+            if not models:
+                return self._unavailable_config(choices)
+            default = next((m for m in models if m['id'] == opts.get('current_model')), models[0])
+            return {'agent': {'name': 'Coding Agent', 'kind': 'coding_agent', 'available': True},
+                    'models': models, 'working_directories': choices,
+                    'defaults': {'model_id': default['id'], 'thinking_level': default['default_thinking_level'],
+                                 'working_directory_id': choice['id']},
+                    'editable_settings': ['model_id', 'thinking_level'] +
+                        (['working_directory_id'] if len(choices) > 1 and not choice['id'].startswith('legacy-') else []),
+                    'limits': {'max_message_characters': 20000}}
         except Exception as exc:
-            logger.error("Failed to query options from Pi (%s)", type(exc).__name__)
-            return {
-                'agent': {'name': 'PI', 'available': False, 'unavailable_reason': str(exc)},
-                'models': [],
-                'working_directories': [],
-                'defaults': {
-                    'model_id': '',
-                    'thinking_level': None,
-                    'working_directory_id': 'default'
-                },
-                'editable_settings': ['model_id', 'thinking_level'],
-                'limits': {'max_message_characters': 20000}
-            }
+            logger.warning('Could not load Coding Agent configuration (%s)', type(exc).__name__)
+            return self._unavailable_config(choices)
 
-        available_levels = opts.get('levels', [])
-        formatted_models = []
-        for m in opts.get('models', []):
-            model_key = f"{m['provider']}/{m['id']}" if m.get('provider') else m['id']
-            # If the model specifies reasoning or global thinking levels exist
-            has_thinking = bool(m.get('reasoning')) or (len(available_levels) > 1 or (available_levels and available_levels != ['off']))
-            levels = available_levels if has_thinking else []
-            default_lvl = opts.get('current_thinking') if levels else None
-            if not default_lvl and levels:
-                default_lvl = 'medium' if 'medium' in levels else levels[0]
+    @staticmethod
+    def _unavailable_config(choices=None):
+        return {'agent': {'name': 'Coding Agent', 'kind': 'coding_agent', 'available': False,
+                          'unavailable_reason': 'Coding Agent or its approved project is unavailable.'},
+                'models': [], 'working_directories': choices or [],
+                'defaults': {'model_id': '', 'thinking_level': None, 'working_directory_id': None},
+                'editable_settings': [], 'limits': {'max_message_characters': 20000}}
 
-            formatted_models.append({
-                'id': model_key,
-                'name': m.get('name') or model_key,
-                'thinking_levels': levels,
-                'default_thinking_level': default_lvl
-            })
+    def _validate_settings(self, user, settings, directory_id=None, normalize=False):
+        if not isinstance(settings, dict) or not all(k in settings for k in ('model_id', 'thinking_level', 'working_directory_id')):
+            raise InvalidSettingsError('All settings fields (model_id, thinking_level, working_directory_id) are required.')
+        if (not isinstance(settings['working_directory_id'], str) or
+                (directory_id is not None and settings['working_directory_id'] != directory_id)):
+            raise InvalidSettingsError('The project cannot change after conversation creation.')
+        model_id = settings['model_id']
+        if not isinstance(model_id, str) or '/' not in model_id or len(model_id) > 300:
+            raise InvalidSettingsError('Choose a provider/model pair.')
+        try:
+            choice, choices = self.pi_service.project_context(user, settings['working_directory_id'])
+            opts = self.pi_service.options(PiService.login_folder(user.username), model_id,
+                project=choice['path'], include_commands=False)
+        except ValueError as exc:
+            raise InvalidSettingsError('Invalid project or model selection.') from None
+        except (OSError, RuntimeError):
+            raise AgentUnavailableError('Coding Agent or its approved project is unavailable.') from None
+        model = next((m for m in opts['models'] if m['provider'] + '/' + m['id'] == model_id), None)
+        if model is None:
+            raise InvalidSettingsError('The selected model is not available in Pi.')
+        levels = opts['levels'] if model.get('reasoning') else []
+        if normalize:
+            if not levels:
+                settings['thinking_level'] = None
+            elif settings['thinking_level'] is None:
+                current = opts.get('current_thinking')
+                settings['thinking_level'] = current if current in levels else levels[0]
+        if (levels and settings['thinking_level'] not in levels) or (not levels and settings['thinking_level'] is not None):
+            raise InvalidSettingsError('The selected model does not support this thinking level.')
+        return {'working_directories': choices}
 
-        default_model = opts.get('current_model', '')
-        if not default_model and formatted_models:
-            default_model = formatted_models[0]['id']
+    def _authorize_session(self, user, metadata):
+        try:
+            self.pi_service.authorize_session(user, metadata)
+        except (OSError, ValueError, KeyError, TypeError):
+            raise InvalidSettingsError('This conversation project is unavailable or no longer approved.') from None
 
-        default_thinking = opts.get('current_thinking', '')
-        if not default_thinking and available_levels:
-            default_thinking = 'medium' if 'medium' in available_levels else available_levels[0]
-
-        workspace_path = str(self.pi_service.workspace(login_name))
-
-        return {
-            'agent': {'name': 'PI', 'available': True},
-            'models': formatted_models,
-            'working_directories': [
-                {'id': 'default', 'name': 'Default workspace', 'path': workspace_path}
-            ],
-            'defaults': {
-                'model_id': default_model,
-                'thinking_level': default_thinking or None,
-                'working_directory_id': 'default'
-            },
-            'editable_settings': ['model_id', 'thinking_level'],
-            'limits': {'max_message_characters': 20000}
-        }
+    def _effective_settings(self, user, metadata):
+        settings = metadata.get('settings', {})
+        return {'model_id': settings.get('model') or settings.get('default_model', ''),
+                'thinking_level': (settings.get('thinking') or settings.get('default_thinking') or None) if settings.get('supports_thinking', True) else None,
+                'working_directory_id': self.pi_service.directory_id(user, metadata)}
 
     def _get_active_run_for_session(self, sid, folder):
         with _SERVICE_LOCK:
-            active = _ACTIVE_RUNS.get(sid)
+            active = _ACTIVE_RUNS.get(str(folder))
             if active:
                 return active.get('meta')
         active_file = folder / 'active_run.json'
@@ -276,58 +307,128 @@ class AgentService:
                     return None
             # Keep the probe locked until stale metadata is removed. A new run
             # must not start in between and have its marker deleted by this query.
+            self._recover_run(folder)
             active_file.unlink(missing_ok=True)
         return None
 
-    def format_session(self, metadata, active_run=None):
+    @staticmethod
+    def _recover_run(folder):
+        active_file = folder / 'active_run.json'
+        if not active_file.is_file():
+            return
+        active = json.loads(active_file.read_text())
+        directory = folder / 'runs' / active['id']
+        path = directory / 'meta.json'
+        if not path.is_file():
+            return
+        metadata = json.loads(path.read_text())
+        if metadata.get('status') in ('completed', 'cancelled', 'failed'):
+            return
+        events = directory / 'events.jsonl'
+        records = []
+        if events.exists():
+            raw = events.read_bytes()
+            complete = raw[:raw.rfind(b'\n') + 1]
+            records = [json.loads(line) for line in complete.splitlines()]
+            if complete != raw:
+                with events.open('r+b') as handle:
+                    handle.truncate(len(complete))
+        terminal = next((e['data'] for e in reversed(records) if e['event'] == 'run_finished'), None)
+        if terminal is None:
+            transcript = folder / 'messages.jsonl'
+            saved = [json.loads(line) for line in transcript.read_text().split('\n') if line.strip()] if transcript.exists() else []
+            source = next((m for m in reversed(saved) if m.get('run_id') == active['id'] and m.get('role') == 'assistant'), None)
+            text = ''.join(e['data']['delta'] for e in records if e['event'] == 'message_delta')
+            web_events = directory / 'web-events.jsonl'
+            if web_events.is_file():
+                candidate, ended, seen = source, False, set()
+                source, text = None, ''
+                raw_web = web_events.read_bytes()
+                complete_web = raw_web[:raw_web.rfind(b'\n') + 1]
+                if raw_web != complete_web:
+                    with web_events.open('r+b') as handle:
+                        handle.truncate(len(complete_web))
+                for line in complete_web.splitlines(keepends=True):
+                    if not line.endswith(b'\n'):
+                        continue
+                    event = json.loads(line)['data']
+                    if event.get('type') == 'message_start' and event.get('message', {}).get('role') == 'assistant':
+                        source, text, ended = None, '', False
+                    elif event.get('type') == 'message_update' and event.get('assistantMessageEvent', {}).get('type') == 'text_delta':
+                        if ended:
+                            source, text, ended = None, '', False
+                        text += event['assistantMessageEvent'].get('delta', '')
+                    elif event.get('type') == 'message_end' and event.get('message', {}).get('role') == 'assistant':
+                        source, ended = event['message'], True
+                        seen.add(source.get('id'))
+                if candidate and candidate.get('id') not in seen:
+                    source = candidate  # Transcript persisted just before its event was written.
+            if source:
+                text = AgentService._text(source)
+            message = {'id': metadata['assistant_message_id'], 'run_id': active['id'], 'role': 'assistant',
+                       'content': text, 'status': 'failed', 'created_at': metadata['created_at']}
+            if source is None:
+                with transcript.open('a') as handle:
+                    handle.write(json.dumps(message, ensure_ascii=False) + '\n')
+            metadata['final_message_id'] = source['id'] if source else message['id']
+            terminal = {'run_id': active['id'], 'status': 'failed', 'message': message,
+                        'error': {'error': 'agent_interrupted', 'message': 'The server stopped before this run finished.',
+                                  'retryable': True, 'request_id': active['id']}}
+            with events.open('a') as handle:
+                handle.write(json.dumps({'id': (records[-1]['id'] if records else 0) + 1,
+                    'event': 'run_finished', 'data': terminal}, ensure_ascii=False) + '\n')
+        metadata.update(status=terminal['status'], response_status=terminal['status'], completed_at=iso_now(), error=terminal.get('error'))
+        _atomic_write(path, json.dumps(metadata, ensure_ascii=False))
+        with (directory / 'web-events.jsonl').open('a') as handle:
+            if terminal['status'] == 'failed':
+                handle.write(json.dumps({'event': 'pi', 'data': {'type': 'error', 'message': 'The server stopped before this run finished.'}}) + '\n')
+            handle.write(json.dumps({'event': 'pi', 'data': {'type': 'done'}}) + '\n')
+
+    @staticmethod
+    def _recover_if_idle(folder):
+        marker = folder / 'active_run.json'
+        if not marker.exists():
+            return
+        with (folder / 'run.lock').open('a') as probe:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return
+            AgentService._recover_run(folder)
+            marker.unlink(missing_ok=True)
+
+    def format_session(self, metadata, active_run=None, user=None):
         created_ts = metadata.get('created', time.time())
         updated_ts = metadata.get('updated', created_ts)
-        st = metadata.get('settings', {})
         return {
             'id': metadata['id'],
             'title': metadata.get('title', 'New conversation'),
             'created_at': to_iso(created_ts),
             'updated_at': to_iso(updated_ts),
-            'settings': {
-                'model_id': st.get('model', ''),
-                'thinking_level': st.get('thinking', ''),
-                'working_directory_id': 'default'
-            },
+            'settings': self._effective_settings(user, metadata),
+            'editable_settings': ['model_id', 'thinking_level'],
             'active_run': active_run
         }
 
     @_serialize_requests
     def create_session(self, user, client_request_id=None, settings_data=None):
-        idem_file = self.pi_service.user_root(user) / 'session_idempotency.json'
+        idem_file = self.pi_service.request_root(user) / 'session_idempotency.json'
         payload_str = json.dumps(settings_data or {}, sort_keys=True)
         cached = self._check_idempotency(idem_file, client_request_id, payload_str)
         if cached is not None:
             return cached[0]
-
-        internal_settings = None
-        if settings_data is not None:
-            if not isinstance(settings_data, dict):
-                raise InvalidSettingsError('Settings must be an object.')
-            req_keys = ('model_id', 'thinking_level', 'working_directory_id')
-            if not all(k in settings_data for k in req_keys):
-                raise InvalidSettingsError('All settings fields (model_id, thinking_level, working_directory_id) are required.')
-            if settings_data.get('working_directory_id') != 'default':
-                raise InvalidSettingsError('Invalid working_directory_id.')
-
-            internal_settings = {
-                'model': settings_data.get('model_id') or '',
-                'thinking': settings_data.get('thinking_level') or '',
-                'prompt': 'general'
-            }
-
-        try:
-            metadata = self.pi_service.create(user, internal_settings)
-        except ValueError as exc:
-            raise InvalidSettingsError(str(exc))
-        except Exception as exc:
-            raise AgentUnavailableError(str(exc))
-
-        res = {'session': self.format_session(metadata, active_run=None)}
+        if settings_data is None:
+            config = self.get_config(user)
+            if not config['agent']['available']:
+                raise AgentUnavailableError('Coding Agent or its approved project is unavailable.')
+            settings_data = config['defaults']
+        else:
+            config = self._validate_settings(user, settings_data)
+        choice = next((p for p in config['working_directories'] if p['id'] == settings_data['working_directory_id']), None)
+        if not choice or choice['id'].startswith('legacy-'):
+            raise InvalidSettingsError('Select an approved coding project for a new conversation.')
+        metadata = self.pi_service.create_api_session(user, choice, settings_data)
+        res = {'session': self.format_session(metadata, user=user)}
         self._save_idempotency(idem_file, client_request_id, payload_str, res, status_code=201)
         return res
 
@@ -343,6 +444,11 @@ class AgentService:
 
     def list_sessions(self, user, limit=30, cursor=None):
         limit = self._page_limit(limit)
+        try:
+            for project in self.pi_service.projects(user):
+                self.pi_service.import_native(user, project['path'])
+        except (OSError, ValueError):
+            pass  # Saved history remains readable when project discovery is unavailable.
         sessions_meta = self.pi_service.list(user)
 
         # Sort by updated_at / created descending
@@ -366,7 +472,7 @@ class AgentService:
                 active_run = self._get_active_run_for_session(m['id'], f)
             except Exception:
                 active_run = None
-            results.append(self.format_session(m, active_run=active_run))
+            results.append(self.format_session(m, active_run=active_run, user=user))
 
         return {
             'sessions': results,
@@ -381,46 +487,29 @@ class AgentService:
 
         metadata = self.pi_service.metadata(f)
         active_run = self._get_active_run_for_session(sid, f)
-        return {'session': self.format_session(metadata, active_run=active_run)}
+        return {'session': self.format_session(metadata, active_run=active_run, user=user)}
 
     def update_settings(self, user, sid, settings_data):
         try:
-            f = self.pi_service.folder(user, sid)
+            folder = self.pi_service.folder(user, sid)
         except FileNotFoundError:
-            raise SessionNotFoundError('Session not found.')
-
-        if self._get_active_run_for_session(sid, f):
-            raise RunActiveError('Cannot change settings while a run is active.')
-
-        if not isinstance(settings_data, dict):
-            raise InvalidSettingsError('Settings must be an object.')
-
-        # Support both {"settings": {...}} and direct {...}
-        target = settings_data.get('settings', settings_data)
-        if not isinstance(target, dict):
-            raise InvalidSettingsError('Settings must be an object.')
-        req_keys = ('model_id', 'thinking_level', 'working_directory_id')
-        if not all(k in target for k in req_keys):
-            raise InvalidSettingsError('All settings fields (model_id, thinking_level, working_directory_id) are required.')
-        if target.get('working_directory_id') != 'default':
-            raise InvalidSettingsError('Invalid working_directory_id.')
-
-        internal_settings = {
-            'model': target.get('model_id') or '',
-            'thinking': target.get('thinking_level') or '',
-            'prompt': 'general'
-        }
-
+            raise SessionNotFoundError('Session not found.') from None
         try:
-            metadata = self.pi_service.configure(user, f, internal_settings)
-        except ValueError as exc:
-            raise InvalidSettingsError(str(exc))
+            lock = self.pi_service.acquire(folder)
         except BusyError:
-            raise RunActiveError('Cannot change settings while a run is active.')
-        except Exception as exc:
-            raise AgentUnavailableError(str(exc))
-
-        return {'session': self.format_session(metadata, active_run=None)}
+            raise RunActiveError('Cannot change settings while a run is active.') from None
+        try:
+            metadata = self.pi_service.metadata(folder)
+            self._authorize_session(user, metadata)
+            target = settings_data.get('settings', settings_data) if isinstance(settings_data, dict) else None
+            self._validate_settings(user, target, self.pi_service.directory_id(user, metadata))
+            metadata['settings'].update(model=target['model_id'], thinking=target['thinking_level'] or '', supports_thinking=target['thinking_level'] is not None)
+            for key in ('default_model', 'default_thinking'):
+                metadata['settings'].pop(key, None)
+            self.pi_service.write_metadata(folder, metadata)
+            return {'session': self.format_session(metadata, user=user)}
+        finally:
+            lock.close()
 
     def get_messages(self, user, sid, limit=50, before=None):
         try:
@@ -429,6 +518,7 @@ class AgentService:
             raise SessionNotFoundError('Session not found.')
 
         limit = self._page_limit(limit)
+        active = self._get_active_run_for_session(sid, f)
         raw_history = self.pi_service.history(f)
         metadata = self.pi_service.metadata(f)
 
@@ -438,6 +528,8 @@ class AgentService:
             role = raw.get('role')
             if role not in ('user', 'assistant'):
                 continue
+            if active and role == 'assistant' and raw.get('run_id') == active['id']:
+                continue
             content = raw.get('content', '')
             if isinstance(content, list):
                 content = '\n'.join(b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text')
@@ -445,7 +537,7 @@ class AgentService:
                 content = str(content or '')
 
             msg_id = raw.get('id') or f"msg-{hashlib.sha256(f'{sid}_{idx}_{role}'.encode()).hexdigest()[:16]}"
-            run_id = raw.get('run_id') or f"run-{hashlib.sha256(f'{sid}_{idx}'.encode()).hexdigest()[:16]}"
+            run_id = raw.get('run_id')
             status = raw.get('status') or 'completed'
             if raw.get('run_id') and role == 'assistant':
                 if run_id not in run_states:
@@ -455,7 +547,7 @@ class AgentService:
                 if state.get('final_message_id') == raw.get('id'):
                     msg_id = state['assistant_message_id']
                     status = state['response_status']
-            created_at = raw.get('created_at') or to_iso(metadata.get('updated', metadata.get('created')))
+            created_at = raw.get('created_at') or to_iso(raw.get('timestamp', metadata.get('created')))
 
             formatted_messages.append({
                 'id': msg_id,
@@ -465,6 +557,18 @@ class AgentService:
                 'status': status,
                 'created_at': created_at
             })
+
+        if active:
+            event_path = f / 'runs' / active['id'] / 'events.jsonl'
+            partial = ''
+            if event_path.is_file():
+                for line in event_path.read_bytes().splitlines(keepends=True):
+                    if line.endswith(b'\n'):
+                        event = json.loads(line)
+                        if event['event'] == 'message_delta':
+                            partial += event['data']['delta']
+            formatted_messages.append({'id': active['assistant_message_id'], 'run_id': active['id'],
+                'role': 'assistant', 'content': partial, 'status': 'streaming', 'created_at': active['created_at']})
 
         # Pagination with `before`
         candidates = formatted_messages
@@ -490,11 +594,14 @@ class AgentService:
         }
 
     @_serialize_requests
-    def submit_run(self, user, sid, client_request_id, message_obj):
+    def submit_run(self, user, sid, client_request_id, message_obj, web_settings=None):
         try:
             f = self.pi_service.folder(user, sid)
         except FileNotFoundError:
             raise SessionNotFoundError('Session not found.')
+
+        if web_settings is not None and not isinstance(web_settings, dict):
+            raise InvalidSettingsError('Settings must be an object.')
 
         if not isinstance(message_obj, dict) or not isinstance(message_obj.get('content'), str):
             raise InvalidMessageError('Message content must be a non-empty string.')
@@ -502,7 +609,7 @@ class AgentService:
         content = message_obj['content'].strip()
         if not content:
             raise InvalidMessageError('Message content cannot be empty.')
-        if len(content) > 20000:
+        if len(content) > (32000 if web_settings is not None else 20000):
             raise InvalidMessageError('Message content exceeds limit of 20000 characters.')
 
         idem_file = f / 'idempotency.json'
@@ -526,18 +633,41 @@ class AgentService:
         active_file = f / 'active_run.json'
         try:
             metadata = self.pi_service.metadata(f)
-            st = metadata.get('settings', {})
+            self._authorize_session(user, metadata)
+            if web_settings is not None:
+                try:
+                    metadata = self.pi_service.configure(user, f, web_settings)
+                except ValueError as exc:
+                    raise InvalidSettingsError(str(exc)) from None
+                except (OSError, RuntimeError):
+                    raise AgentUnavailableError('Coding Agent or its approved project is unavailable.') from None
+            effective = self._effective_settings(user, metadata)
+            if web_settings is not None and not web_settings.get('thinking'):
+                effective['thinking_level'] = None
+            if not effective['model_id']:
+                config = self.get_config(user, effective['working_directory_id'])
+                if not config['agent']['available']:
+                    raise AgentUnavailableError('Coding Agent or its approved project is unavailable.')
+                effective.update(model_id=config['defaults']['model_id'], thinking_level=config['defaults']['thinking_level'])
+            self._validate_settings(user, effective, effective['working_directory_id'], normalize=True)
+            metadata['settings'].update(model=effective['model_id'], thinking=effective['thinking_level'] or '', supports_thinking=effective['thinking_level'] is not None)
+            self.pi_service.write_metadata(f, metadata)
             run_meta = {
                 'id': run_id, 'session_id': sid, 'status': 'queued',
                 'user_message_id': user_msg_id, 'assistant_message_id': assistant_msg_id,
-                'settings': {'model_id': st.get('model', ''), 'thinking_level': st.get('thinking', ''),
-                             'working_directory_id': 'default'},
+                'settings': effective,
                 'created_at': iso_now(), 'completed_at': None,
             }
             run_dir = f / 'runs' / run_id
             run_dir.mkdir(parents=True, exist_ok=True)
             _atomic_write(run_dir / 'meta.json', json.dumps(run_meta, ensure_ascii=False))
             _atomic_write(active_file, json.dumps(run_meta, ensure_ascii=False))
+            self.pi_service.save(f, {'id': user_msg_id, 'role': 'user', 'content': content,
+                'run_id': run_id, 'status': 'completed', 'created_at': run_meta['created_at']})
+            metadata['updated'] = time.time()
+            if metadata['title'] == 'New conversation':
+                metadata['title'] = content[:70]
+            self.pi_service.write_metadata(f, metadata)
             thread = threading.Thread(target=self._execute_run,
                 args=(f, sid, run_meta, content, lock, stop_event), daemon=True)
             res = {'run': dict(run_meta)}
@@ -546,13 +676,13 @@ class AgentService:
             with _SERVICE_LOCK:
                 if _SHUTTING_DOWN:
                     raise AgentUnavailableError('The agent worker is shutting down.')
-                _ACTIVE_RUNS[sid] = {'run_id': run_id, 'meta': run_meta, 'folder': f,
+                _ACTIVE_RUNS[str(f)] = {'run_id': run_id, 'meta': run_meta, 'folder': f,
                                      'thread': thread, 'stop_event': stop_event}
                 thread.start()
             return res
         except BaseException:
             with _SERVICE_LOCK:
-                _ACTIVE_RUNS.pop(sid, None)
+                _ACTIVE_RUNS.pop(str(f), None)
             active_file.unlink(missing_ok=True)
             lock.close()
             if client_request_id:
@@ -574,7 +704,7 @@ class AgentService:
         if last_message is None:
             last_message = {'id': run_meta['assistant_message_id'], 'role': 'assistant',
                             'content': partial_text, 'run_id': run_meta['id'],
-                            'status': status, 'created_at': iso_now()}
+                            'status': status, 'created_at': run_meta['created_at']}
             self.pi_service.save(folder, last_message)
         return ({'id': run_meta['assistant_message_id'], 'run_id': run_meta['id'], 'role': 'assistant',
                  'content': self._text(last_message), 'status': status,
@@ -589,6 +719,7 @@ class AgentService:
         message_ended = False
         terminal_status = 'completed'
         error_obj = None
+        user_echo_seen = False
 
         def emit(event_type, data):
             nonlocal event_counter
@@ -597,9 +728,13 @@ class AgentService:
             with (run_dir / 'events.jsonl').open('a', encoding='utf-8') as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + '\n')
 
+        def emit_raw(event):
+            with (run_dir / 'web-events.jsonl').open('a', encoding='utf-8') as handle:
+                handle.write(json.dumps({'event': 'pi', 'data': event}, ensure_ascii=False) + '\n')
+
         def track_process(process):
             with _SERVICE_LOCK:
-                active = _ACTIVE_RUNS.get(sid)
+                active = _ACTIVE_RUNS.get(str(folder))
                 if active and active['run_id'] == run_id:
                     active['process'] = process
 
@@ -609,17 +744,24 @@ class AgentService:
             _atomic_write(run_dir / 'meta.json', json.dumps(run_meta, ensure_ascii=False))
             _atomic_write(folder / 'active_run.json', json.dumps(run_meta, ensure_ascii=False))
             emit('status', {'run_id': run_id, 'status': 'running', 'stage': 'thinking'})
+            emit_raw({'type': 'api_user_message', 'message': message_content})
             for event in self.pi_service.run(folder, message_content, lock,
                     user_message_meta={'id': run_meta['user_message_id'], 'run_id': run_id,
                                        'status': 'completed', 'created_at': run_meta['created_at']},
                     assistant_message_meta={'run_id': run_id, 'status': 'completed', 'created_at': run_meta['created_at']},
-                    release_lock=False, stop_event=stop_event, on_process=track_process):
+                    release_lock=False, stop_event=stop_event, on_process=track_process, user_message_saved=True):
                 kind = event.get('type')
+                if kind == 'message_end' and event.get('message', {}).get('role') == 'user':
+                    if user_echo_seen:
+                        emit_raw({'type': 'api_user_message', 'message': self._text(event['message'])})
+                    user_echo_seen = True
+                if kind != 'done':
+                    emit_raw(event)
                 if kind == 'message_start' and event.get('message', {}).get('role') == 'assistant':
                     partial_text = []
                     last_message = None
                     message_ended = False
-                elif kind in ('tool_execution_start', 'auto_retry_start', 'auto_compaction_start'):
+                elif kind in ('tool_execution_start', 'tool_execution_end', 'auto_retry_start', 'auto_retry_end', 'auto_compaction_start', 'auto_compaction_end'):
                     emit('status', {'run_id': run_id, 'status': 'running', 'stage': 'working'})
                 elif kind == 'message_update':
                     update = event.get('assistantMessageEvent', {})
@@ -630,6 +772,8 @@ class AgentService:
                             partial_text = []
                             last_message = None
                             message_ended = False
+                        if not partial_text:
+                            emit('status', {'run_id': run_id, 'status': 'running', 'stage': 'responding'})
                         partial_text.append(update['delta'])
                         emit('message_delta', {'run_id': run_id, 'message_id': run_meta['assistant_message_id'], 'delta': update['delta']})
                 elif kind == 'message_end' and event.get('message', {}).get('role') == 'assistant':
@@ -637,17 +781,17 @@ class AgentService:
                     message_ended = True
                     if last_message.get('errorMessage'):
                         terminal_status = 'failed'
-                        error_obj = {'error': 'provider_error', 'message': last_message['errorMessage'],
+                        error_obj = {'error': 'provider_error', 'message': 'The model provider could not complete this response.',
                                      'retryable': True, 'request_id': run_id}
                 elif kind == 'error':
                     terminal_status = 'failed'
-                    error_obj = {'error': 'agent_failed', 'message': event.get('message', 'Execution failed'),
+                    error_obj = {'error': 'agent_failed', 'message': 'Pi could not complete this response.',
                                  'retryable': True, 'request_id': run_id}
                 elif kind == 'status' and event.get('message') == 'Stopped.':
                     terminal_status = 'cancelled'
         except Exception as exc:
             terminal_status = 'failed'
-            error_obj = {'error': 'agent_failed', 'message': str(exc), 'retryable': True, 'request_id': run_id}
+            error_obj = {'error': 'agent_failed', 'message': 'Pi could not complete this response.', 'retryable': True, 'request_id': run_id}
         finally:
             try:
                 if stop_event.is_set() or (folder / 'stop').exists():
@@ -661,13 +805,16 @@ class AgentService:
                 emit('run_finished', payload)
                 _atomic_write(run_dir / 'meta.json', json.dumps({**final_meta, 'status': terminal_status,
                     'completed_at': iso_now(), 'error': error_obj}, ensure_ascii=False))
+                if terminal_status == 'failed':
+                    emit_raw({'type': 'error', 'message': error_obj['message'] if error_obj else 'Pi could not complete this response.'})
+                emit_raw({'type': 'done'})
             except Exception as exc:
                 logger.error('Failed to finalize agent run (%s)', type(exc).__name__)
             finally:
                 with _SERVICE_LOCK:
-                    active = _ACTIVE_RUNS.get(sid)
+                    active = _ACTIVE_RUNS.get(str(folder))
                     if active and active['run_id'] == run_id:
-                        _ACTIVE_RUNS.pop(sid, None)
+                        _ACTIVE_RUNS.pop(str(folder), None)
                 (folder / 'active_run.json').unlink(missing_ok=True)
                 (folder / 'stop').unlink(missing_ok=True)
                 # Keep the conversation locked until transcript, events and state are final.
@@ -679,10 +826,12 @@ class AgentService:
         except FileNotFoundError:
             raise SessionNotFoundError('Session not found.')
 
+        if not isinstance(run_id, str) or not re.fullmatch(r'run-[0-9a-f]{32}', run_id):
+            raise SessionNotFoundError('Run not found.')
         active = self._get_active_run_for_session(sid, f)
         if active and active.get('id') == run_id:
             (f / 'stop').touch()
-            return {'run': {'id': run_id, 'status': 'cancelled'}}
+            return {'run': {'id': run_id, 'status': active['status']}}
 
         run_meta_file = f / 'runs' / run_id / 'meta.json'
         if run_meta_file.is_file():
@@ -692,9 +841,9 @@ class AgentService:
             except Exception:
                 pass
 
-        return {'run': {'id': run_id, 'status': 'completed'}}
+        raise SessionNotFoundError('Run not found.')
 
-    def stream_run_events(self, user, sid, run_id, last_event_id=None):
+    def stream_run_events(self, user, sid, run_id, last_event_id=None, raw=False):
         # This method deliberately returns a generator instead of being one: all
         # validation runs while the route can still return structured JSON errors.
         try:
@@ -707,12 +856,13 @@ class AgentService:
         directory = folder / 'runs' / run_id
         if not directory.is_dir():
             raise SessionNotFoundError('Run not found.')
+        self._get_active_run_for_session(sid, folder)
         metadata = json.loads((directory / 'meta.json').read_text(encoding='utf-8'))
         if metadata.get('completed_at'):
             completed = datetime.fromisoformat(metadata['completed_at'].replace('Z', '+00:00'))
             if (datetime.now(timezone.utc) - completed).total_seconds() > 86400:
                 raise EventHistoryExpiredError('Event history for this run has expired.')
-        return self._tail_events(directory, last_event_id)
+        return self._tail_events(directory, last_event_id, raw=raw)
 
     @staticmethod
     def _wait_for_finalization(directory):
@@ -733,8 +883,8 @@ class AgentService:
             time.sleep(.01)
 
     @staticmethod
-    def _tail_events(directory, last_event_id):
-        events = directory / 'events.jsonl'
+    def _tail_events(directory, last_event_id, raw=False):
+        events = directory / ('web-events.jsonl' if raw else 'events.jsonl')
         offset = 0
         last_heartbeat = time.monotonic()
         while True:
@@ -746,12 +896,16 @@ class AgentService:
                             break  # The writer has not finished this record yet.
                         record = json.loads(line)
                         offset = handle.tell()
-                        if record['event'] == 'run_finished':
+                        terminal = record['event'] == 'run_finished' or (raw and record['data'].get('type') == 'done')
+                        if terminal:
                             AgentService._wait_for_finalization(directory)
-                        if last_event_id is None or record['id'] > last_event_id:
+                        if raw:
+                            yield 'data: ' + json.dumps(record['data'], ensure_ascii=False) + '\n\n'
+                        elif last_event_id is None or record['id'] > last_event_id:
                             yield f"id: {record['id']}\nevent: {record['event']}\ndata: {json.dumps(record['data'], ensure_ascii=False)}\n\n"
-                        if record['event'] == 'run_finished':
+                        if terminal:
                             return
+            AgentService._recover_if_idle(directory.parent.parent)
             metadata = json.loads((directory / 'meta.json').read_text(encoding='utf-8'))
             if metadata.get('status') in ('completed', 'cancelled', 'failed'):
                 if not events.exists() or events.stat().st_size == offset:

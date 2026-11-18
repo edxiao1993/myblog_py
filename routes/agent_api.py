@@ -1,6 +1,8 @@
+import logging
+import re
 import uuid
 from functools import wraps
-from flask import Blueprint, Response, current_app, jsonify, request
+from flask import Blueprint, Response, current_app, g, jsonify, request
 from utils.jwt import verify_access_token
 from services.agent_service import (
     AgentAPIError,
@@ -11,6 +13,19 @@ from services.agent_service import (
 )
 
 bp = Blueprint('agent_api', __name__)
+
+
+@bp.before_request
+def request_id():
+    supplied = request.headers.get('X-Request-ID', '')
+    g.agent_request_id = supplied if re.fullmatch(r'[A-Za-z0-9_.:-]{1,200}', supplied) else uuid.uuid4().hex
+
+
+@bp.after_request
+def response_id(response):
+    response.headers['X-Request-ID'] = g.agent_request_id
+    logging.getLogger(__name__).info('Agent API %s status=%s request_id=%s', request.endpoint, response.status_code, g.agent_request_id)
+    return response
 
 
 def agent_service():
@@ -36,7 +51,7 @@ def agent_auth_required(f):
 
 @bp.errorhandler(AgentAPIError)
 def handle_agent_error(err):
-    req_id = request.headers.get('X-Request-ID') or uuid.uuid4().hex
+    req_id = g.agent_request_id
     return jsonify({
         'error': err.error,
         'message': err.message,
@@ -49,7 +64,7 @@ def handle_agent_error(err):
 @agent_auth_required
 def get_config():
     svc = agent_service()
-    return jsonify(svc.get_config(request.current_user))
+    return jsonify(svc.get_config(request.current_user, request.args.get('working_directory_id')))
 
 
 @bp.post('/sessions')

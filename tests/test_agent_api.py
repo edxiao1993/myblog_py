@@ -12,6 +12,7 @@ import time
 import unittest
 from pathlib import Path
 from flask import Flask
+from flask_login import LoginManager
 from database import db
 from models.user import User
 from routes import register_blueprints
@@ -79,6 +80,8 @@ for line in sys.stdin:
             TESTING=True,
             SQLALCHEMY_DATABASE_URI='sqlite:///:memory:',
             SQLALCHEMY_TRACK_MODIFICATIONS=False,
+            CODING_PROJECT_ROOT=str(root / 'projects'),
+            CODING_PI_AGENT_DIR=str(root / 'agent'),
             PI_EXECUTABLE=str(fake_pi),
             PI_DATA_DIR=str(root / 'data'),
             PI_WORKSPACE=str(root / 'workspace'),
@@ -88,6 +91,8 @@ for line in sys.stdin:
         init_i18n(self.app)
         db.init_app(self.app)
         register_blueprints(self.app)
+        login = LoginManager(self.app)
+        login.user_loader(lambda uid: db.session.get(User, int(uid)))
 
         with self.app.app_context():
             db.create_all()
@@ -142,11 +147,12 @@ for line in sys.stdin:
         self.assertEqual(res.status_code, 200)
         data = res.get_json()
         self.assertTrue(data['agent']['available'])
-        self.assertEqual(data['agent']['name'], 'PI')
+        self.assertEqual(data['agent']['name'], 'Coding Agent')
+        self.assertEqual(data['agent']['kind'], 'coding_agent')
         self.assertTrue(len(data['models']) > 0)
         self.assertEqual(data['models'][0]['id'], 'test/reasoner')
         self.assertEqual(data['defaults']['working_directory_id'], 'default')
-        self.assertEqual(data['editable_settings'], ['model_id', 'thinking_level'])
+        self.assertIn('model_id', data['editable_settings'])
         self.assertEqual(data['limits']['max_message_characters'], 20000)
 
     def test_create_session_and_idempotency(self):
@@ -481,9 +487,9 @@ for line in sys.stdin:
         sid = self.client.post('/api/agent/sessions', headers=self.auth1, json={}).json['session']['id']
         response = self.client.get(f'/api/agent/sessions/{sid}/runs/run-missing/events', headers=self.auth1)
         self.assertEqual(response.status_code, 404)
-        from services.pi_service import PiService
+        from services.agent_backend import AgentBackend
         with self.app.app_context():
-            folder = PiService(self.app.config).folder(SimpleNamespace(id=self.user1_id, username='kevin'), sid)
+            folder = AgentBackend(self.app.config).folder(SimpleNamespace(id=self.user1_id, username='kevin'), sid)
         run_id = 'run-' + 'e'*32
         directory = folder / 'runs' / run_id
         directory.mkdir(parents=True)
@@ -496,13 +502,13 @@ for line in sys.stdin:
         from services.agent_service import AgentService
         service = AgentService(self.app.config)
         user = SimpleNamespace(id=self.user1_id, username='kevin')
-        original = service.pi_service.create
+        original = service.pi_service.create_api_session
         entered = threading.Event()
         def slow_create(*args, **kwargs):
             entered.set()
             time.sleep(.1)
             return original(*args, **kwargs)
-        with patch.object(service.pi_service, 'create', side_effect=slow_create):
+        with patch.object(service.pi_service, 'create_api_session', side_effect=slow_create):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 first = pool.submit(service.create_session, user, 'same-key', None)
                 self.assertTrue(entered.wait(2))
@@ -582,11 +588,18 @@ for line in sys.stdin:
         fake.write_text('#!' + sys.executable + '\n' + '''import json, os, sys, time
 from pathlib import Path
 for line in sys.stdin:
-    if json.loads(line).get('type') == 'prompt':
+    command = json.loads(line)
+    replies = {'get_available_models': {'models':[{'id':'reasoner','provider':'test','reasoning':True}]},
+        'get_available_thinking_levels': {'levels':['off','low','high']},
+        'get_state': {'model':{'id':'reasoner','provider':'test'},'thinkingLevel':'low'}}
+    if command['type'] in replies:
+        print(json.dumps({'id':command['id'],'type':'response','success':True,'data':replies[command['type']]}),flush=True)
+        continue
+    if command.get('type') == 'prompt':
         Path(__file__).with_suffix('.pid').write_text(str(os.getpid()))
         time.sleep(30)
 ''')
-        config = {key: value for key, value in self.app.config.items() if key.startswith('PI_')}
+        config = {key: value for key, value in self.app.config.items() if key.startswith(('PI_', 'CODING_'))}
         child = '''import json, sys, time
 from pathlib import Path
 from types import SimpleNamespace
@@ -614,7 +627,7 @@ assert marker.exists()
         finally:
             try: os.killpg(pid, signal.SIGTERM)
             except ProcessLookupError: pass
-        root = Path(config['PI_DATA_DIR']) / 'users' / 'exit-test'
+        root = Path(config['PI_DATA_DIR']) / 'coding' / 'users' / 'exit-test'
         metas = list(root.glob('*/runs/*/meta.json'))
         self.assertEqual(len(metas), 1)
         self.assertEqual(json.loads(metas[0].read_text())['status'], 'cancelled')
@@ -646,6 +659,12 @@ assert marker.exists()
 from pathlib import Path
 for line in sys.stdin:
     command = json.loads(line)
+    replies = {'get_available_models': {'models':[{'id':'reasoner','provider':'test','reasoning':True}]},
+        'get_available_thinking_levels': {'levels':['off','low','high']},
+        'get_state': {'model':{'id':'reasoner','provider':'test'},'thinkingLevel':'low'}}
+    if command['type'] in replies:
+        print(json.dumps({'id':command['id'],'type':'response','success':True,'data':replies[command['type']]}),flush=True)
+        continue
     if command['type'] == 'prompt':
         Path(__file__).with_suffix('.pid').write_text(str(os.getpid()))
     elif command['type'] == 'abort':
@@ -653,7 +672,7 @@ for line in sys.stdin:
         print(json.dumps({'type':'agent_settled'}), flush=True)
 ''')
         fake.chmod(0o700)
-        shared = {key: value for key, value in self.app.config.items() if key.startswith('PI_')}
+        shared = {key: value for key, value in self.app.config.items() if key.startswith(('PI_', 'CODING_'))}
         shared.update(PI_EXECUTABLE=str(fake), PI_DATA_DIR=str(root/'shared-data'), PI_TIMEOUT=60)
         (root/'agent_reload_probe.py').write_text('from tests.test_agent_api import AgentAPITests\n'
             'fixture=AgentAPITests()\nfixture.setUp()\napp=fixture.app\napp.config.update(' + repr(shared) + ')\n')
@@ -742,8 +761,8 @@ for line in sys.stdin:
 
     def test_api_completion_keeps_transcript_append_only_for_memory_checkpoints(self):
         sid, _, _ = self.completed_run('multi-turn')
-        from services.pi_service import PiService
-        folder = PiService(self.app.config).folder(SimpleNamespace(id=self.user1_id, username='kevin'), sid)
+        from services.agent_backend import AgentBackend
+        folder = AgentBackend(self.app.config).folder(SimpleNamespace(id=self.user1_id, username='kevin'), sid)
         path = folder / 'messages.jsonl'
         before, inode = path.read_bytes(), path.stat().st_ino
         response = self.client.post(f'/api/agent/sessions/{sid}/runs', headers=self.auth1,
@@ -768,6 +787,228 @@ for line in sys.stdin:
             self.assertEqual(response.status_code, 202)
             run_id = response.json['run']['id']
             self.client.get(f'/api/agent/sessions/{sid}/runs/{run_id}/events', headers=self.auth1).get_data()
+
+    def test_coding_api_project_choices_are_owned_and_sessions_are_shared_with_web(self):
+        root = Path(self.app.config['CODING_PROJECT_ROOT'])
+        root.mkdir(exist_ok=True)
+        selected = root / 'selected'
+        selected.mkdir()
+        self.app.config['CODING_API_PROJECTS'] = {'kevin': [{'id': 'chosen', 'name': 'Selected', 'path': str(selected)}], 'other': []}
+        config = self.client.get('/api/agent/config?working_directory_id=chosen', headers=self.auth1).json
+        self.assertEqual(config['agent']['kind'], 'coding_agent')
+        self.assertEqual(config['defaults']['working_directory_id'], 'chosen')
+        self.assertEqual(config['working_directories'][0]['path'], str(selected.resolve()))
+        self.assertFalse(self.client.get('/api/agent/config', headers=self.auth2).json['agent']['available'])
+        self.assertEqual(self.client.get('/api/agent/config?working_directory_id=chosen', headers=self.auth2).status_code, 422)
+        session = self.client.post('/api/agent/sessions', headers=self.auth1, json={}).json['session']
+        self.assertEqual(session['settings']['working_directory_id'], 'chosen')
+        self.assertEqual(session['editable_settings'], ['model_id', 'thinking_level'])
+        from services.coding_service import CodingService
+        folder = CodingService(self.app.config).folder(SimpleNamespace(id=self.user1_id, username='kevin'), session['id'])
+        metadata = json.loads((folder / 'metadata.json').read_text())
+        self.assertEqual(metadata['project'], str(selected.resolve()))
+        self.assertEqual(metadata['prompt_text'], '')
+        self.assertEqual(self.client.get('/api/agent/sessions/' + session['id'], headers=self.auth2).status_code, 404)
+        self.assertEqual(self.client.patch('/api/agent/sessions/' + session['id'] + '/settings', headers=self.auth1,
+            json={'model_id':'test/reasoner','thinking_level':'low','working_directory_id':'default'}).status_code, 422)
+
+    def test_legacy_session_context_and_creation_retries_survive_migration(self):
+        from services.pi_service import PiService
+        from services.agent_service import AgentService
+        user = SimpleNamespace(id=self.user1_id, username='kevin')
+        legacy = PiService(self.app.config)
+        metadata = legacy.create(user)
+        folder = legacy.folder(user, metadata['id'])
+        original = (folder / 'metadata.json').read_bytes()
+        svc = AgentService(self.app.config)
+        response = {'session': svc.format_session(metadata, user=user)}
+        svc._save_idempotency(legacy.user_root(user) / 'session_idempotency.json', 'old-request', '{}', response, 201)
+        self.assertEqual(self.client.post('/api/agent/sessions', headers=self.auth1, json={'client_request_id':'old-request'}).json, response)
+        detail = self.client.get('/api/agent/sessions/' + metadata['id'], headers=self.auth1)
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual((folder / 'metadata.json').read_bytes(), original)
+        self.assertIn(metadata['id'], [m['id'] for m in self.client.get('/api/agent/sessions', headers=self.auth1).json['sessions']])
+
+    def test_web_created_session_can_be_read_and_run_through_api(self):
+        from services.coding_service import CodingService
+        root = Path(self.app.config['CODING_PROJECT_ROOT'])
+        root.mkdir(exist_ok=True)
+        web = CodingService(self.app.config)
+        metadata = web.create(SimpleNamespace(id=self.user1_id, username='kevin'), {'project': str(root)})
+        sid = metadata['id']
+        response = self.client.post(f'/api/agent/sessions/{sid}/runs', headers=self.auth1, json={'message':{'content':'hello'}})
+        self.assertEqual(response.status_code, 202)
+        run = response.json['run']
+        self.assertNotEqual(run['settings']['working_directory_id'], 'default')
+        stream = self.client.get(f"/api/agent/sessions/{sid}/runs/{run['id']}/events", headers=self.auth1).get_data(as_text=True)
+        self.assertEqual(stream.count('event: run_finished'), 1)
+        self.assertEqual(self.client.get(f'/api/agent/sessions/{sid}/messages', headers=self.auth1).json['messages'][-1]['content'], 'Hello world!')
+
+    def test_config_and_validation_use_each_models_actual_thinking_levels(self):
+        from services.agent_backend import AgentBackend
+        models = [{'provider':'test','id':'small','reasoning':False}, {'provider':'test','id':'reasoner','reasoning':True}]
+        def options(_self, login_name, model='', **kwargs):
+            return {'models':models,'current_model':model or 'test/small','current_thinking':'high',
+                    'levels':['low','high'] if model == 'test/reasoner' else ['off']}
+        with patch.object(AgentBackend, 'options', options):
+            config = self.client.get('/api/agent/config', headers=self.auth1).json
+            self.assertEqual(config['models'][0]['thinking_levels'], [])
+            self.assertIsNone(config['defaults']['thinking_level'])
+            self.assertEqual(config['models'][1]['thinking_levels'], ['low','high'])
+            self.assertEqual(config['models'][1]['default_thinking_level'], 'high')
+            invalid = self.client.post('/api/agent/sessions', headers=self.auth1, json={'settings':{
+                'model_id':'test/small','thinking_level':'high','working_directory_id':'default'}})
+            self.assertEqual(invalid.status_code, 422)
+            valid = self.client.post('/api/agent/sessions', headers=self.auth1, json={'settings':{
+                'model_id':'test/small','thinking_level':None,'working_directory_id':'default'}})
+            self.assertEqual(valid.status_code, 201)
+            self.assertIsNone(valid.json['session']['settings']['thinking_level'])
+
+    def test_web_run_survives_disconnect_and_is_visible_cancellable_and_replayable_in_api(self):
+        sid = self.client.post('/api/agent/sessions', headers=self.auth1, json={}).json['session']['id']
+        with self.client.session_transaction() as state:
+            state['_user_id'] = str(self.user1_id)
+            state['_fresh'] = True
+            state['pi_csrf'] = 'web-test'
+        invalid = self.client.post(f'/coding/api/pi/sessions/{sid}/messages',
+            headers={'X-CSRF-Token':'web-test'}, json={'message':'hello','settings':[]})
+        self.assertEqual(invalid.status_code,422)
+        response = self.client.post(f'/coding/api/pi/sessions/{sid}/messages',
+            headers={'X-CSRF-Token':'web-test'}, json={'message':'slow-run'}, buffered=False)
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        detail = self.client.get(f'/api/agent/sessions/{sid}', headers=self.auth1).json['session']
+        run = detail['active_run']
+        self.assertIsNotNone(run)
+        history = self.client.get(f'/api/agent/sessions/{sid}/messages', headers=self.auth1).json['messages']
+        self.assertEqual(history[0]['id'], run['user_message_id'])
+        self.assertEqual(history[-1]['id'], run['assistant_message_id'])
+        self.assertEqual(history[-1]['status'], 'streaming')
+        self.assertEqual(self.client.post(f'/api/agent/sessions/{sid}/runs', headers=self.auth1,
+            json={'message':{'content':'overlap'}}).status_code, 409)
+        self.assertEqual(self.client.post(f"/api/agent/sessions/{sid}/runs/{run['id']}/cancel", headers=self.auth1).status_code, 200)
+        stream = self.client.get(f"/api/agent/sessions/{sid}/runs/{run['id']}/events", headers=self.auth1).get_data(as_text=True)
+        self.assertEqual(stream.count('event: run_finished'), 1)
+        self.assertIn('"status": "cancelled"', stream)
+        replay = self.client.get(f"/coding/api/pi/sessions/{sid}/runs/{run['id']}/events").get_data(as_text=True)
+        self.assertIn('api_user_message', replay)
+        self.assertIn('"type": "done"', replay)
+        with self.client.session_transaction() as state:
+            state['_user_id'] = str(self.user2_id)
+        self.assertEqual(self.client.get(f"/coding/api/pi/sessions/{sid}/runs/{run['id']}/events").status_code, 404)
+
+    def test_abandoned_run_recovers_as_failed_with_partial_text_and_one_terminal_event(self):
+        from services.agent_service import AgentService
+        svc = AgentService(self.app.config)
+        user = SimpleNamespace(id=self.user1_id, username='kevin')
+        sid = svc.create_session(user)['session']['id']
+        folder = svc.pi_service.folder(user, sid)
+        run_id = 'run-' + 'f'*32
+        directory = folder / 'runs' / run_id
+        directory.mkdir(parents=True)
+        run = {'id':run_id, 'status':'running', 'created_at':'2026-11-17T01:00:00Z',
+            'assistant_message_id':'assistant-stale','user_message_id':'user-stale', 'settings':{}}
+        (directory / 'meta.json').write_text(json.dumps(run))
+        (folder / 'active_run.json').write_text(json.dumps(run))
+        (directory / 'events.jsonl').write_text(json.dumps({'id':1,'event':'message_delta','data':{'delta':'partial'}})+'\n')
+        early = {'id':'earlier-step','role':'assistant','content':'Earlier tool step','run_id':run_id,'created_at':run['created_at']}
+        svc.pi_service.save(folder,early)
+        raw_events = [{'type':'message_end','message':early}, {'type':'message_start','message':{'role':'assistant'}},
+            {'type':'message_update','assistantMessageEvent':{'type':'text_delta','delta':'partial'}}]
+        (directory / 'web-events.jsonl').write_text(''.join(json.dumps({'event':'pi','data':e})+'\n' for e in raw_events)+'{incomplete')
+        self.assertIsNone(svc.get_session_detail(user, sid)['session']['active_run'])
+        self.assertTrue(all(json.loads(line) for line in (directory / 'web-events.jsonl').read_text().splitlines()))
+        history = svc.get_messages(user, sid)['messages']
+        self.assertEqual(history[-1]['content'], 'partial')
+        self.assertEqual(history[-1]['status'], 'failed')
+        first = ''.join(svc.stream_run_events(user, sid, run_id))
+        second = ''.join(svc.stream_run_events(user, sid, run_id))
+        self.assertEqual(first.count('event: run_finished'),1)
+        self.assertEqual(first,second)
+        self.assertFalse((folder / 'active_run.json').exists())
+
+    def test_deleted_project_history_remains_readable_but_cannot_execute(self):
+        from services.agent_service import AgentService
+        svc = AgentService(self.app.config)
+        user = SimpleNamespace(id=self.user1_id, username='kevin')
+        sid = svc.create_session(user)['session']['id']
+        folder = svc.pi_service.folder(user, sid)
+        project = Path(svc.pi_service.metadata(folder)['project'])
+        # An explicit approval registry must not recreate a removed project.
+        self.app.config['CODING_API_PROJECTS'] = {'kevin':[{'id':'default','name':'Default','path':str(project)}]}
+        project.rmdir()
+        self.assertEqual(self.client.get(f'/api/agent/sessions/{sid}', headers=self.auth1).status_code,200)
+        self.assertEqual(self.client.get(f'/api/agent/sessions/{sid}/messages', headers=self.auth1).status_code,200)
+        self.assertNotEqual(self.client.post(f'/api/agent/sessions/{sid}/runs', headers=self.auth1,
+            json={'message':{'content':'cannot run'}}).status_code,202)
+        self.assertFalse(project.exists())
+
+    def test_reassigned_project_id_cannot_redirect_an_existing_conversation(self):
+        root = Path(self.app.config['CODING_PROJECT_ROOT'])
+        root.mkdir(exist_ok=True)
+        first, second = root / 'first', root / 'second'
+        first.mkdir(); second.mkdir()
+        self.app.config['CODING_API_PROJECTS'] = {'kevin':[{'id':'default','name':'First','path':str(first)}]}
+        sid = self.client.post('/api/agent/sessions', headers=self.auth1, json={}).json['session']['id']
+        self.app.config['CODING_API_PROJECTS']['kevin'][0]['path'] = str(second)
+        self.assertEqual(self.client.get(f'/api/agent/sessions/{sid}', headers=self.auth1).status_code,200)
+        self.assertEqual(self.client.post(f'/api/agent/sessions/{sid}/runs', headers=self.auth1,
+            json={'message':{'content':'do not redirect'}}).status_code,422)
+
+    def test_request_id_is_echoed_without_reflecting_unsafe_header_values(self):
+        response = self.client.get('/api/agent/config', headers={'X-Request-ID':'mobile-request-17'})
+        self.assertEqual(response.status_code,401)
+        self.assertEqual(response.json['request_id'],'mobile-request-17')
+        self.assertEqual(response.headers['X-Request-ID'],'mobile-request-17')
+        response = self.client.get('/api/agent/config', headers={'X-Request-ID':'unsafe request value'})
+        self.assertNotEqual(response.headers['X-Request-ID'],'unsafe request value')
+
+    def test_invalid_approval_configuration_cannot_enable_a_default_project(self):
+        self.app.config['CODING_API_PROJECTS'] = {'kevin':None}
+        response = self.client.get('/api/agent/config', headers=self.auth1)
+        self.assertFalse(response.json['agent']['available'])
+        self.assertEqual(self.client.post('/api/agent/sessions', headers=self.auth1, json={}).status_code,503)
+
+    def test_old_web_messages_have_nullable_run_ids_and_stable_timestamps(self):
+        from services.agent_service import AgentService
+        svc = AgentService(self.app.config)
+        user = SimpleNamespace(id=self.user1_id, username='kevin')
+        sid = svc.create_session(user)['session']['id']
+        folder = svc.pi_service.folder(user,sid)
+        svc.pi_service.save(folder,{'role':'user','content':'old web message','timestamp':1700000000000})
+        first = svc.get_messages(user,sid)['messages'][0]
+        self.assertIsNone(first['run_id'])
+        metadata = svc.pi_service.metadata(folder)
+        metadata['updated'] = time.time()+1000
+        svc.pi_service.write_metadata(folder,metadata)
+        self.assertEqual(first,svc.get_messages(user,sid)['messages'][0])
+
+    def test_native_run_uses_the_project_directory_and_coding_prompt(self):
+        from services.agent_service import AgentService
+        from services.pi_service import PiService
+        svc = AgentService(self.app.config)
+        user = SimpleNamespace(id=self.user1_id,username='kevin')
+        sid = svc.create_session(user)['session']['id']
+        folder = svc.pi_service.folder(user,sid)
+        commands = []
+        original = subprocess.Popen
+        def capture(args, **kwargs):
+            if '--session' in args:
+                commands.append((args,kwargs['cwd']))
+            return original(args,**kwargs)
+        with patch('services.pi_service.subprocess.Popen',side_effect=capture):
+            run = svc.submit_run(user,sid,'cwd-check',{'content':'hello'})['run']
+            list(svc.stream_run_events(user,sid,run['id']))
+        self.assertEqual(len(commands),1)
+        args,cwd = commands[0]
+        self.assertEqual(str(cwd),svc.pi_service.metadata(folder)['project'])
+        self.assertEqual(args[args.index('--session')+1],str(folder/'session.jsonl'))
+        self.assertNotIn('--append-system-prompt',args)
+
+    def test_message_history_preserves_unicode_line_separators(self):
+        sid, run, finished = self.completed_run('中文\u2028paragraph\u2029end')
+        history = self.client.get(f'/api/agent/sessions/{sid}/messages', headers=self.auth1).json['messages']
+        self.assertEqual(history[0]['content'], '中文\u2028paragraph\u2029end')
 
 
 if __name__ == '__main__':

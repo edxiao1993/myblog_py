@@ -131,7 +131,7 @@ class PiService:
         if process.stderr is not None:
             process.stderr.close()
 
-    def options(self, login_name, model='', project=None, session_path=None, session_name=None):
+    def options(self, login_name, model='', project=None, session_path=None, session_name=None, include_commands=True):
         if not isinstance(model, str) or len(model) > 300 or (model and ('/' not in model or not all(model.split('/', 1)))):
             raise ValueError('Invalid model selection.')
         agent_event('options.started')
@@ -178,7 +178,7 @@ class PiService:
             agent_event('options.completed', model=(current.get('provider', '') + '/' + current.get('id', '')).strip('/'))
             return {
                 'models': [{key: item.get(key) for key in ('id', 'provider', 'name', 'reasoning')} for item in models],
-                'commands': query('get_commands').get('commands', []) if project else [],
+                'commands': query('get_commands').get('commands', []) if project and include_commands else [],
                 'levels': levels, 'current_model': '/'.join([current['provider'], current['id']]) if current else '',
                 'current_thinking': state.get('thinkingLevel', ''), 'prompts': self.prompts(),
             }
@@ -279,7 +279,7 @@ class PiService:
 
     def history(self, folder):
         path = folder / 'messages.jsonl'
-        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        return [json.loads(line) for line in path.read_text().split('\n') if line.strip()] if path.exists() else []
 
     def save(self, folder, message):
         with (folder / 'messages.jsonl').open('a') as handle:
@@ -322,7 +322,7 @@ class PiService:
         return self.workspace(folder.parent.name)
 
     def run(self, folder, message, lock, attachments=None, user_message_meta=None, assistant_message_meta=None,
-            release_lock=True, stop_event=None, on_process=None):
+            release_lock=True, stop_event=None, on_process=None, user_message_saved=False):
         process = None
         started = time.monotonic()
         context = {**agent_context(), 'session_id': folder.name}
@@ -418,7 +418,8 @@ class PiService:
                 saved['attachments'] = attachments
             if user_message_meta:
                 saved.update(user_message_meta)
-            self.save(folder, saved)
+            if not user_message_saved:
+                self.save(folder, saved)
             if metadata['title'] == 'New conversation':
                 metadata['title'] = message[:70]
             metadata['updated'] = time.time()
@@ -438,7 +439,7 @@ class PiService:
             def drain_inbox(settling=False):
                 with self.inbox_lock(folder):
                     inbox = folder / 'inbox.jsonl'
-                    commands = [json.loads(line) for line in inbox.read_text().splitlines()]
+                    commands = [json.loads(line) for line in inbox.read_text().split('\n') if line.strip()]
                     for command in commands:
                         send({**command, 'type': 'prompt', 'streamingBehavior': 'steer'})
                         appended.add(command['id'])

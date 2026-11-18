@@ -2,7 +2,7 @@
   const el = id => document.getElementById('coding-' + id);
   const t = (s, values) => window.AppI18n.t(s, values);
   let directory = '', project = '', sid = '', busy = false, running = false, appending = false, calls = new Map(), group = null, summary = null;
-  let thinkingBlocks = new Map();
+  let thinkingBlocks = new Map(), activeCalls = new Set();
   const projectKey = 'coding-agent-project-' + (el('app').dataset.userId || 'default');
   marked.setOptions({gfm: true, breaks: true});
   const settings = () => ({model: el('model').value, thinking: el('thinking').value, prompt: 'pi'});
@@ -73,37 +73,80 @@
     return body;
   }
   const content = message => typeof message.content === 'string' ? message.content : (message.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-  function tool(id, name, value, replace = false) {
+  function refreshActivityGroup(force = false) {
+    if (!group || (!force && calls.size <= 10 && !summary)) return;
+    if (!summary) {
+      const wrapper = document.createElement('details'); summary = document.createElement('summary');
+      group.replaceWith(wrapper); wrapper.append(summary, group); collapsible(wrapper);
+      wrapper.open = activeCalls.size > 0;
+      const groupedCalls = calls;
+      copyButton(wrapper, () => Array.from(groupedCalls.values(), body => body.parentElement.children[0].textContent + '\n' + body.textContent).join('\n\n'));
+    }
+    summary.textContent = t('Tool calls ({count})', {count: calls.size});
+  }
+  function collapseActivity() {
+    for (const body of calls.values()) body.parentElement.open = false;
+    activeCalls.clear();
+    refreshActivityGroup(true);
+    if (summary) summary.parentElement.open = false;
+  }
+  function tool(id, name, value, replace = false, active = false) {
     if (!group) { group = document.createElement('div'); el('messages').append(group); }
     if (!calls.has(id)) calls.set(id, textCard(name, '', true, group));
-    const body = calls.get(id);
+    const body = calls.get(id), wasActive = activeCalls.has(id);
     if (!replace && body.textContent && body.textContent !== value) body.textContent += '\n\n' + value;
     else body.textContent = value;
-    if (calls.size > 10) {
-      if (!summary) {
-        const wrapper = document.createElement('details'); summary = document.createElement('summary');
-        group.replaceWith(wrapper); wrapper.append(summary, group); collapsible(wrapper);
-        const groupedCalls = calls;
-        copyButton(wrapper, () => Array.from(groupedCalls.values(), body => body.parentElement.children[0].textContent + '\n' + body.textContent).join('\n\n'));
-      }
-      summary.textContent = t('Tool calls ({count})', {count: calls.size});
+    if (active) {
+      activeCalls.add(id);
+      if (!wasActive) body.parentElement.open = true;
+    } else {
+      activeCalls.delete(id); body.parentElement.open = false;
     }
+    refreshActivityGroup();
+    if (summary && active && !wasActive) summary.parentElement.open = true;
+    if (summary && !activeCalls.size && !active) summary.parentElement.open = false;
+    return body;
   }
-  function thinking(index, text, append = false) {
+  function thinking(index, text, append = false, active = append) {
     if (!thinkingBlocks.has(index)) thinkingBlocks.set(index, {id: {}, text: ''});
     const block = thinkingBlocks.get(index);
     block.text = append ? block.text + text : text;
-    tool(block.id, t('Thinking'), block.text, true);
+    tool(block.id, t('Thinking'), block.text, true, active);
   }
-  function newTurn() { calls = new Map(); group = null; summary = null; thinkingBlocks = new Map(); }
+  function activityEvent(event) {
+    if (event.type === 'message_start' && event.message?.role === 'assistant') thinkingBlocks = new Map();
+    const update = event.assistantMessageEvent;
+    if (event.type === 'message_update') {
+      if (update?.type === 'thinking_start') thinking(update.contentIndex, '', false, true);
+      if (update?.type === 'thinking_delta') thinking(update.contentIndex, update.delta, true);
+      if (update?.type === 'thinking_end') thinking(update.contentIndex,
+        typeof update.content === 'string' ? update.content : thinkingBlocks.get(update.contentIndex)?.text || '', false, false);
+      if (update?.type === 'text_delta' && update.delta) collapseActivity();
+    }
+    if (event.type === 'tool_execution_start') {
+      const args = JSON.stringify(event.args || {}, null, 2);
+      tool(event.toolCallId, event.toolName, args, true, true).dataset.arguments = args;
+    }
+    if (event.type === 'tool_execution_update' || event.type === 'tool_execution_end') {
+      const args = calls.get(event.toolCallId)?.dataset.arguments || '';
+      const output = (event.isError ? t('Failed') + '\n' : '') + content(event.result || event.partialResult || {});
+      tool(event.toolCallId, event.toolName, args + (args && output ? '\n\n' : '') + output,
+        true, event.type === 'tool_execution_update');
+    }
+    if (event.type === 'done' || event.type === 'error') collapseActivity();
+  }
+  function newTurn() { calls = new Map(); group = null; summary = null; thinkingBlocks = new Map(); activeCalls = new Set(); }
   function render(message, streamed = false) {
     if (message.role === 'assistant' && streamed !== true) thinkingBlocks = new Map();
     if (message.role === 'user') newTurn();
     if (message.role === 'toolResult') { tool(message.toolCallId, message.toolName, content(message)); return; }
-    if (content(message)) messageCard(message.role, content(message));
     for (const [index, block] of (Array.isArray(message.content) ? message.content : []).entries()) {
       if (block.type === 'thinking') thinking(index, block.thinking || '');
       if (block.type === 'toolCall') tool(block.id, block.name, JSON.stringify(block.arguments, null, 2));
+    }
+    if (content(message)) {
+      if (message.role === 'assistant') collapseActivity();
+      messageCard(message.role, content(message));
     }
   }
   async function history() {
@@ -117,9 +160,17 @@
         setBusy(true);
         try {
           const detail = await (await api('/sessions/' + item.id + '/detail')).json();
-          sid = item.id; el('messages').replaceChildren(); newTurn(); detail.messages.forEach(render);
+          sid = item.id; el('messages').replaceChildren(); newTurn();
+          const active = detail.active_run;
+          const current = active ? detail.messages.findIndex(message => message.id === active.user_message_id) : -1;
+          (current < 0 ? detail.messages : detail.messages.slice(0, current)).forEach(render);
+          if (active) {
+            running = true; setBusy(true);
+            await consumeStream(await api('/sessions/' + sid + '/runs/' + active.id + '/events'), true);
+            running = false; await history();
+          }
           await options(detail.session.settings.model, detail.session.settings.thinking);
-        } finally { setBusy(false); }
+        } finally { running = false; setBusy(false); }
       });
       const rename = () => {
         clearTimeout(clickTimer);
@@ -196,6 +247,34 @@
     } finally { setBusy(false); }
   }
   async function browse(path) { await loadDirectory(path); await selectProject(); }
+  async function consumeStream(response, showUser = false) {
+    const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '', streaming = null;
+      while (true) {
+        const {value, done} = await reader.read(); if (done) break; pending += decoder.decode(value, {stream: true});
+        let index;
+        while ((index = pending.indexOf('\n\n')) >= 0) {
+          const frame = pending.slice(0, index); pending = pending.slice(index + 2);
+          if (!frame.startsWith('data: ')) continue;
+          const event = JSON.parse(frame.slice(6));
+          if (event.type === 'api_user_message' && showUser) {
+            newTurn(); messageCard('user', event.message);
+          }
+          activityEvent(event);
+          if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
+            if (!streaming) streaming = messageCard('assistant', '');
+            updateMarkdown(streaming, streaming.dataset.markdown + event.assistantMessageEvent.delta);
+          }
+          if (event.type === 'message_end' && event.message.role === 'user') newTurn();
+          if (event.type === 'message_end' && event.message.role !== 'user') {
+            if (streaming) { streaming.parentElement.remove(); streaming = null; }
+            render(event.message, true);
+          }
+          if (event.type === 'error') throw new Error(t(event.message));
+          if (event.type === 'status') el('status').textContent = t(event.message);
+          el('messages').scrollTop = el('messages').scrollHeight;
+        }
+      }
+  }
   async function send(message) {
     if (appending || !project) return;
     if (busy) {
@@ -219,34 +298,7 @@
       const response = await api('/sessions/' + sid + '/messages', {message, settings: settings()});
       running = true; setBusy(true);
       if (el('message').value.trim() === message) el('message').value = '';
-      const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '', streaming = null;
-      while (true) {
-        const {value, done} = await reader.read(); if (done) break; pending += decoder.decode(value, {stream: true});
-        let index;
-        while ((index = pending.indexOf('\n\n')) >= 0) {
-          const frame = pending.slice(0, index); pending = pending.slice(index + 2);
-          if (!frame.startsWith('data: ')) continue;
-          const event = JSON.parse(frame.slice(6));
-          if (event.type === 'message_start' && event.message?.role === 'assistant') thinkingBlocks = new Map();
-          const update = event.assistantMessageEvent;
-          if (event.type === 'message_update' && update?.type === 'thinking_delta') thinking(update.contentIndex, update.delta, true);
-          if (event.type === 'message_update' && update?.type === 'thinking_end' && typeof update.content === 'string') thinking(update.contentIndex, update.content);
-          if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
-            if (!streaming) streaming = messageCard('assistant', '');
-            updateMarkdown(streaming, streaming.dataset.markdown + event.assistantMessageEvent.delta);
-          }
-          if (event.type === 'message_end' && event.message.role === 'user') newTurn();
-          if (event.type === 'message_end' && event.message.role !== 'user') {
-            if (streaming) { streaming.parentElement.remove(); streaming = null; }
-            render(event.message, true);
-          }
-          if (event.type === 'tool_execution_start') tool(event.toolCallId, event.toolName, JSON.stringify(event.args, null, 2));
-          if (event.type === 'tool_execution_end' || event.type === 'tool_execution_update') tool(event.toolCallId, event.toolName, (event.isError ? t('Failed') + '\n' : '') + content(event.result || event.partialResult || {}));
-          if (event.type === 'error') throw new Error(t(event.message));
-          if (event.type === 'status') el('status').textContent = t(event.message);
-          el('messages').scrollTop = el('messages').scrollHeight;
-        }
-      }
+      await consumeStream(response);
       running = false; setBusy(true); el('status').textContent = ''; await history();
     } finally { running = false; setBusy(false); }
   }

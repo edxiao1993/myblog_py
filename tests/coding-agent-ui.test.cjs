@@ -19,7 +19,7 @@ function setup(fetch, storedProject = null) {
   const get = id => { if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id); };
   const context = {fetch, localStorage:{getItem:key => stored.get(key) ?? null,setItem:(key,value) => stored.set(key,value)}, navigator:{clipboard}, TextDecoder, setTimeout, clearTimeout, marked:require('../static/js/marked.min.js'), DOMPurify:{sanitize:html => 'sanitized:' + html}, document: {getElementById:get, querySelectorAll:() => [], createElement:tag => new Element(tag)}, window:{AppI18n:{t:(s,v) => s.replace('{count}',v?.count)}}};
   vm.createContext(context);
-  vm.runInContext(readFileSync('static/js/coding-agent.js','utf8').replace("  initialize().catch(report);", '  window.test = {tool, render, newTurn, browse, updateMarkdown, send, thinking, initialize};'),context);
+  vm.runInContext(readFileSync('static/js/coding-agent.js','utf8').replace("  initialize().catch(report);", '  window.test = {tool, render, newTurn, browse, updateMarkdown, send, thinking, initialize, activityEvent};'),context);
   return {stored, copied, clipboard, ui:context.window.test, window:context.window, get, messages:get('coding-messages')};
 }
 test('eleventh tool groups calls and preserves arguments and output', () => {
@@ -310,4 +310,103 @@ test('reload restores the selected project and its history', async () => {
   await assert.rejects(reloaded.ui.initialize(),/Options unavailable/);
   assert.match(requested[0],/path=%2Fhome%2Fdev%2Fnew-project/);
   assert.equal(reloaded.get('coding-history').children[0].children[0].textContent,'New project chat');
+});
+
+test('opening a managed active session replays its raw stream without sending a new message', async () => {
+  let posted = 0;
+  const events = [{type:'api_user_message',message:'Current request'},
+    {type:'api_user_message',message:'Appended request'},
+    {type:'message_end',message:{role:'assistant',content:'Finished response'}},{type:'done'}];
+  const {ui,get,messages} = setup(async (url,request) => {
+    if (request.method === 'POST') posted++;
+    if (url.includes('/options')) throw new Error('Options unavailable');
+    if (url.endsWith('/events')) {
+      let done = false;
+      return {ok:true,body:{getReader:() => ({read:async () => {
+        if(done)return {done:true}; done=true;
+        return {done:false,value:new TextEncoder().encode(events.map(e => 'data: '+JSON.stringify(e)+'\n\n').join(''))};
+      }})}};
+    }
+    const data = url.includes('/projects') ? {path:'/home/dev/project',folders:[]} : url.endsWith('/detail') ? {
+      session:{settings:{model:'test/model',thinking:'high'}},active_run:{id:'run-active',user_message_id:'current'},
+      messages:[{role:'user',content:'Older request'},{id:'current',role:'user',content:'Current request',run_id:'run-active'},
+        {role:'user',content:'Appended request'}]} : [{id:'saved',project:'/home/dev/project',title:'Running'}];
+    return {ok:true,json:async () => data};
+  });
+  await assert.rejects(ui.browse('/home/dev/project'),/Options unavailable/);
+  await get('coding-history').children[0].children[0].onclick({detail:0});
+  assert.equal(posted,0);
+  assert.equal(messages.children.length,4);
+  assert.equal(messages.children[1].children[0].dataset.markdown,'Current request');
+  assert.equal(messages.children[2].children[0].dataset.markdown,'Appended request');
+  assert.equal(messages.children[3].children[1].dataset.markdown,'Finished response');
+});
+
+test('live thinking and tool cards open while working and close when finished', () => {
+  const {ui,messages} = setup();
+  ui.activityEvent({type:'message_update',assistantMessageEvent:{type:'thinking_delta',contentIndex:0,delta:'Planning'}});
+  const thinking = messages.children[0].children[0];
+  assert.equal(thinking.open,true);
+  assert.equal(thinking.children[1].textContent,'Planning');
+  ui.activityEvent({type:'message_update',assistantMessageEvent:{type:'thinking_end',contentIndex:0}});
+  assert.equal(thinking.open,false);
+  ui.activityEvent({type:'tool_execution_start',toolCallId:'t',toolName:'bash',args:{command:'pwd'}});
+  const tool = messages.children[0].children[1];
+  assert.equal(tool.open,true);
+  ui.activityEvent({type:'tool_execution_update',toolCallId:'t',toolName:'bash',partialResult:{content:'partial'}});
+  ui.activityEvent({type:'tool_execution_end',toolCallId:'t',toolName:'bash',result:{content:'finished'}});
+  assert.equal(tool.open,false);
+  assert.match(tool.children[1].textContent,/pwd/);
+  assert.match(tool.children[1].textContent,/finished/);
+  assert.doesNotMatch(tool.children[1].textContent,/partial/);
+  ui.render({role:'assistant',content:'Final answer'});
+  const group = messages.children[0];
+  assert.equal(group.tagName,'details');
+  assert.equal(group.open,false);
+  assert.equal(group.children[0].textContent,'Tool calls (2)');
+});
+
+test('responses collapse even one activity and later active tools remain visible', () => {
+  const {ui,messages} = setup();
+  ui.activityEvent({type:'tool_execution_start',toolCallId:'a',toolName:'read',args:{}});
+  ui.activityEvent({type:'tool_execution_end',toolCallId:'a',toolName:'read',result:{content:'done'}});
+  ui.activityEvent({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'Response'}});
+  assert.equal(messages.children[0].open,false);
+  ui.render({role:'assistant',content:'Response'});
+  const group = messages.children[0];
+  assert.equal(group.open,false);
+  assert.equal(group.children[0].textContent,'Tool calls (1)');
+  ui.activityEvent({type:'tool_execution_start',toolCallId:'b',toolName:'read',args:{}});
+  assert.equal(group.open,true);
+  ui.activityEvent({type:'tool_execution_start',toolCallId:'c',toolName:'read',args:{}});
+  ui.activityEvent({type:'tool_execution_end',toolCallId:'b',toolName:'read',result:{}});
+  assert.equal(group.open,true);
+  ui.activityEvent({type:'tool_execution_end',toolCallId:'c',toolName:'read',result:{}});
+  assert.equal(group.open,false);
+  ui.render({role:'assistant',content:'Another response'});
+  assert.equal(group.children[0].textContent,'Tool calls (3)');
+});
+
+test('saved activity is grouped before its response even below ten calls', () => {
+  const {ui,messages} = setup();
+  ui.render({role:'assistant',content:[{type:'thinking',thinking:'Saved reasoning'},{type:'text',text:'Saved reply'}]});
+  assert.equal(messages.children[0].tagName,'details');
+  assert.equal(messages.children[0].open,false);
+  assert.equal(messages.children[1].children[1].dataset.markdown,'Saved reply');
+});
+
+test('grouped parallel work stays expanded until the last tool finishes, and errors close pending work', () => {
+  const {ui,messages} = setup();
+  for(let i=0;i<11;i++) ui.activityEvent({type:'tool_execution_start',toolCallId:String(i),toolName:'read',args:{}});
+  const group = messages.children[0];
+  assert.equal(group.open,true);
+  for(let i=0;i<10;i++) ui.activityEvent({type:'tool_execution_end',toolCallId:String(i),toolName:'read',result:{}});
+  assert.equal(group.open,true);
+  ui.activityEvent({type:'tool_execution_end',toolCallId:'10',toolName:'read',result:{}});
+  assert.equal(group.open,false);
+  ui.activityEvent({type:'tool_execution_start',toolCallId:'failed',toolName:'bash',args:{}});
+  assert.equal(group.open,true);
+  ui.activityEvent({type:'error',message:'Stopped'});
+  assert.equal(group.open,false);
+  assert.equal(group.children[1].children.at(-1).open,false);
 });

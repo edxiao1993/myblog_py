@@ -144,6 +144,16 @@ def message(sid):
     text = data.get('message') if isinstance(data, dict) else None
     if not isinstance(text, str) or not text.strip() or len(text) > 32000:
         return jsonify(error='Enter a message of 1–32000 characters.'), 400
+    if request.blueprint == 'coding_agent':
+        from services.agent_service import AgentService, AgentAPIError
+        try:
+            svc = AgentService(current_app.config)
+            result = svc.submit_run(current_user, sid, None, {'content': text}, web_settings=data.get('settings', {}))
+            events = svc.stream_run_events(current_user, sid, result['run']['id'], raw=True)
+            return Response(stream_with_context(events), mimetype='text/event-stream', headers={
+                'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no'})
+        except AgentAPIError as exc:
+            return jsonify(error=_(exc.message)), exc.status_code
     agent = service()
     path = folder(sid)
     try:
@@ -260,7 +270,11 @@ def options():
 def detail(sid):
     path = folder(sid)
     agent = service()
-    return jsonify(session=agent.metadata(path), messages=agent.history(path), files=agent.files(path))
+    result = dict(session=agent.metadata(path), messages=agent.history(path), files=agent.files(path))
+    if request.blueprint == 'coding_agent':
+        from services.agent_service import AgentService
+        result['active_run'] = AgentService(current_app.config)._get_active_run_for_session(sid, path)
+    return jsonify(result)
 
 
 @bp.post('/api/pi/sessions/<sid>/settings')
@@ -391,3 +405,17 @@ def rename_session(sid):
         return jsonify(error=_(str(exc))), 503
     finally:
         lock.close()
+
+
+@bp.get('/api/pi/sessions/<sid>/runs/<run_id>/events')
+@authorized
+def coding_run_events(sid, run_id):
+    if request.blueprint != 'coding_agent':
+        abort(404)
+    from services.agent_service import AgentService, AgentAPIError
+    try:
+        events = AgentService(current_app.config).stream_run_events(current_user, sid, run_id, raw=True)
+    except AgentAPIError as exc:
+        return jsonify(error=_(exc.message)), exc.status_code
+    return Response(stream_with_context(events), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no'})
