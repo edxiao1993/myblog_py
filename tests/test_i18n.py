@@ -1,5 +1,6 @@
 """Language preferences, translated UI, and safe language switching."""
 from pathlib import Path
+import json
 import unittest
 
 from flask import Flask, render_template
@@ -59,6 +60,21 @@ class LanguageTests(unittest.TestCase):
                     if page == 'pi_agent':
                         self.assertIn('id="pi-mobile-theme"', body)
 
+    def test_coding_delete_messages_are_translated(self):
+        expected = {
+            'Delete conversation?': '删除对话？',
+            'Delete conversation: {title}': '删除对话：{title}',
+            'Delete "{title}" from history? Pi transcript files will be preserved.': '从历史记录中删除“{title}”？Pi 对话记录文件将被保留。',
+            'Conversation deleted from history.': '对话已从历史记录中删除。',
+            'Unable to delete this conversation.': '无法删除此对话。',
+        }
+        for language in ('en', 'zh-CN'):
+            self.client.set_cookie('language', language)
+            body = self.client.get('/preview/coding_agent').get_data(as_text=True)
+            catalog = json.loads(body.split('<script id="i18n-data" type="application/json">')[1].split('</script>')[0])['messages']
+            for key, chinese in expected.items():
+                self.assertEqual(catalog.get(key, key), chinese if language == 'zh-CN' else key)
+
     def test_coding_page_languages_and_mobile_layout(self):
         for language, label in [('en', 'Project folder'), ('zh-CN', '项目文件夹')]:
             self.client.set_cookie('language', language)
@@ -77,6 +93,26 @@ class LanguageTests(unittest.TestCase):
             self.assertNotIn('data-sidebar-hidden', body)
             self.assertIn('grid-template-columns:240px minmax(0,1fr)', body)
             self.assertIn('id="coding-sidebar" class="card p-2"', body)
+            self.assertIn('id="coding-delete-dialog" aria-labelledby="coding-delete-title" aria-describedby="coding-delete-description"', body)
+            self.assertIn('删除对话？' if language == 'zh-CN' else 'Delete conversation?', body)
+            self.assertIn('id="coding-delete-cancel"', body)
+            self.assertIn('id="coding-delete-confirm"', body)
+            self.assertIn('id="coding-activity-spinner"', body)
+            self.assertIn('id="coding-activity" role="status" aria-live="polite"></span>', body)
+            self.assertIn('id="coding-message" aria-label="' + ('消息' if language == 'zh-CN' else 'Message') + '"', body)
+            catalog = json.loads(body.split('<script id="i18n-data" type="application/json">')[1].split('</script>')[0])['messages']
+            self.assertEqual(catalog.get('Agent is working…', 'Agent is working…'), '助手正在处理…' if language == 'zh-CN' else 'Agent is working…')
+            self.assertEqual(catalog.get('Running a tool…', 'Running a tool…'), '正在运行工具…' if language == 'zh-CN' else 'Running a tool…')
+            self.assertIn('prefers-reduced-motion:reduce', body)
+            self.assertIn('class="coding-conversation mb-2"', body)
+            self.assertIn('width:24px;height:24px;min-height:24px', body)
+            self.assertIn('id="coding-jump-latest"', body)
+            jump = body.split('<button id="coding-jump-latest"')[1].split('</button>')[0]
+            self.assertIn('aria-label="' + ('跳到最新消息' if language == 'zh-CN' else 'Jump to latest') + '"', jump)
+            self.assertIn(' hidden>', jump)
+            self.assertEqual(jump.split(' hidden>')[1], '<span aria-hidden="true">↓</span>')
+            self.assertIn('aria-controls="coding-messages"', body)
+            self.assertIn('跳到最新消息' if language == 'zh-CN' else 'Jump to latest', body)
             self.assertNotIn('custom-prompt', body)
             self.assertIn('<dialog id="coding-directory-dialog"', body)
             self.assertNotIn('id="coding-path"', body.split('</aside>')[0])

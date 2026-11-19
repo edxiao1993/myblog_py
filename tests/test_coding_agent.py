@@ -82,6 +82,24 @@ class CodingTests(unittest.TestCase):
         self.agent.import_native(self.user, str(self.project))
         self.assertEqual(len(self.agent.list(self.user)), 1)
 
+    def test_deleted_native_session_is_not_reimported(self):
+        directory = self.agent.native_directory(self.project)
+        directory.mkdir(parents=True)
+        source = directory / 'native.jsonl'
+        raw = '\n'.join(json.dumps(entry) for entry in [
+            {'type': 'session', 'cwd': str(self.project)},
+            {'type': 'message', 'message': {'role': 'user', 'content': 'Hello'}},
+        ]) + '\n'
+        source.write_text(raw)
+        self.agent.import_native(self.user, self.project)
+        metadata = self.agent.list(self.user)[0]
+        folder = self.agent.folder(self.user, metadata['id'])
+        self.agent.delete(folder)
+        self.agent.import_native(self.user, self.project)
+        self.assertEqual(self.agent.list(self.user), [])
+        self.assertEqual(source.read_text(), raw)
+        self.assertEqual((folder / 'session.jsonl').read_text(), raw)
+
     def test_web_history_is_discoverable_without_duplicate_or_cross_user_import(self):
         metadata = self.agent.create(self.user, {'project': str(self.project)})
         folder = self.agent.folder(self.user, metadata['id'])

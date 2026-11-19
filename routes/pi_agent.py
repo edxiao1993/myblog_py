@@ -385,6 +385,24 @@ def projects():
         return jsonify(error=_('Unable to open or create this project folder.')), 400
 
 
+@bp.post('/api/pi/sessions/<sid>/delete')
+@authorized
+def delete_session(sid):
+    if request.blueprint != 'coding_agent':
+        abort(404)
+    agent = service()
+    path = folder(sid)
+    try:
+        agent.delete(path)
+    except FileNotFoundError:
+        abort(404)
+    except BusyError as exc:
+        return jsonify(error=_(str(exc))), 409
+    except OSError:
+        return jsonify(error=_('Unable to delete this conversation.')), 503
+    return jsonify(ok=True)
+
+
 @bp.post('/api/pi/sessions/<sid>/name')
 @authorized
 def rename_session(sid):

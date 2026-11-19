@@ -3,7 +3,10 @@ const assert = require('node:assert/strict');
 const {readFileSync} = require('node:fs');
 const vm = require('node:vm');
 class Element {
-  constructor(tag) { this.tagName = tag; this.children = []; this.textContent = ''; this.dataset = {}; this.value = ''; this.style = {}; }
+  constructor(tag) { this.tagName = tag; this.children = []; this.textContent = ''; this.dataset = {}; this.value = ''; this.style = {}; this.scrollTop = 0; this.scrollHeight = 0; this.clientHeight = 0; }
+  addEventListener(name, callback) { this['on' + name] = callback; }
+  showModal() { this.open = true; }
+  close(value = '') { this.returnValue = value; this.open = false; this.onclose?.(); }
   focus() {}
   select() {}
   setAttribute(name,value) { this[name] = value; }
@@ -14,14 +17,68 @@ class Element {
 function setup(fetch, storedProject = null) {
   const stored = new Map();
   if (storedProject) stored.set('coding-agent-project-default', storedProject);
-  const elements = new Map(), copied = [];
+  const elements = new Map(), copied = [], observers = [];
+  class Observer { constructor(callback) { observers.push(callback); } observe() {} }
   const clipboard = {writeText:async text => {copied.push(text);}};
   const get = id => { if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id); };
-  const context = {fetch, localStorage:{getItem:key => stored.get(key) ?? null,setItem:(key,value) => stored.set(key,value)}, navigator:{clipboard}, TextDecoder, setTimeout, clearTimeout, marked:require('../static/js/marked.min.js'), DOMPurify:{sanitize:html => 'sanitized:' + html}, document: {getElementById:get, querySelectorAll:() => [], createElement:tag => new Element(tag)}, window:{AppI18n:{t:(s,v) => s.replace('{count}',v?.count)}}};
+  const context = {fetch, MutationObserver:Observer, ResizeObserver:Observer, localStorage:{getItem:key => stored.get(key) ?? null,setItem:(key,value) => stored.set(key,value)}, navigator:{clipboard}, TextDecoder, setTimeout, clearTimeout, marked:require('../static/js/marked.min.js'), DOMPurify:{sanitize:html => 'sanitized:' + html}, document: {getElementById:get, querySelectorAll:() => [get('coding-jump-latest')], createElement:tag => new Element(tag)}, window:{AppI18n:{t:(s,v) => s.replace(/\{(\w+)\}/g, (match, key) => v?.[key] ?? match)}}};
   vm.createContext(context);
-  vm.runInContext(readFileSync('static/js/coding-agent.js','utf8').replace("  initialize().catch(report);", '  window.test = {tool, render, newTurn, browse, updateMarkdown, send, thinking, initialize, activityEvent};'),context);
-  return {stored, copied, clipboard, ui:context.window.test, window:context.window, get, messages:get('coding-messages')};
+  vm.runInContext(readFileSync('static/js/coding-agent.js','utf8').replace("  initialize().catch(report);", '  window.test = {tool, render, newTurn, browse, updateMarkdown, send, thinking, initialize, activityEvent, setBusy};'),context);
+  return {observers, stored, copied, clipboard, ui:context.window.test, window:context.window, get, messages:get('coding-messages')};
 }
+test('input label shows agent activity and resets after completion or failure', () => {
+  const {ui, get} = setup();
+  ui.activityEvent({type:'message_update', assistantMessageEvent:{type:'thinking_start',contentIndex:0}});
+  assert.equal(get('coding-activity').textContent, 'Thinking…');
+  assert.equal(get('coding-activity-spinner').hidden, false);
+  ui.activityEvent({type:'tool_execution_start',toolCallId:'a',toolName:'read'});
+  assert.equal(get('coding-activity').textContent, 'Running a tool…');
+  ui.activityEvent({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'Hello'}});
+  assert.equal(get('coding-activity').textContent, 'Preparing a response…');
+  ui.activityEvent({type:'done'});
+  assert.equal(get('coding-activity').textContent, '');
+  assert.equal(get('coding-activity-spinner').hidden, true);
+  ui.activityEvent({type:'tool_execution_start',toolCallId:'b',toolName:'read'});
+  ui.setBusy(false);
+  assert.equal(get('coding-activity').textContent, '');
+  assert.equal(get('coding-activity-spinner').hidden, true);
+});
+
+test('jump to latest scrolls history to the bottom and stays usable while busy', () => {
+  const {get, messages, ui, observers} = setup();
+  const button = get('coding-jump-latest');
+  assert.equal(button.hidden, true);
+  messages.scrollTop = 0;
+  messages.clientHeight = 600;
+  messages.scrollHeight = 2400;
+  observers[0]();
+  assert.equal(button.hidden, false);
+  messages.scrollTop = 1800;
+  messages.onscroll();
+  assert.equal(button.hidden, true);
+  messages.scrollTop = 500;
+  messages.onscroll();
+  assert.equal(button.hidden, false);
+  ui.setBusy(true);
+  const jump = get('coding-jump-latest');
+  assert.equal(jump.disabled, false);
+  jump.onclick();
+  assert.equal(messages.scrollTop, 2400);
+  assert.equal(jump.hidden, true);
+  messages.scrollHeight = 3600;
+  observers[0]();
+  assert.equal(jump.hidden, false);
+  jump.onclick();
+  assert.equal(messages.scrollTop, 3600);
+  messages.scrollHeight = 5000;
+  observers[1]();
+  assert.equal(jump.hidden, false);
+  messages.scrollHeight = 0;
+  messages.scrollTop = 0;
+  observers[0]();
+  assert.equal(jump.hidden, true);
+});
+
 test('eleventh tool groups calls and preserves arguments and output', () => {
   const {ui,messages} = setup();
   for (let i=0;i<10;i++) ui.tool(String(i),'read','args '+i);
@@ -189,6 +246,37 @@ test('running tasks accept one append request, retain newer drafts, and render f
   assert.equal(get('coding-message').value,'new draft');
 });
 
+test('history deletion asks for confirmation and refreshes only after success', async () => {
+  let deleted = false, writes = 0;
+  const {ui, get} = setup(async (url, request) => {
+    if (url.includes('/options')) throw new Error('Options unavailable');
+    if (url.endsWith('/delete')) { writes++; deleted = true; assert.equal(request.method, 'POST'); return {ok:true}; }
+    return {ok:true,json:async () => url.includes('/projects') ? {path:'/home/dev/project',folders:[]} : deleted ? [] : [{id:'saved',project:'/home/dev/project',title:'<script>Title</script>'}]};
+  });
+  await assert.rejects(ui.browse('/home/dev/project'), /Options unavailable/);
+  const remove = get('coding-history').children[0].children[1];
+  assert.match(remove['aria-label'], /<script>Title<\/script>/);
+  assert.equal(remove.children[0].textContent, '×');
+  assert.match(remove.className, /coding-history-delete/);
+  let pending = remove.onclick();
+  assert.equal(get('coding-delete-dialog').open, true);
+  assert.match(get('coding-delete-description').textContent, /<script>Title<\/script>/);
+  assert.match(get('coding-delete-description').textContent, /Pi transcript files will be preserved/);
+  get('coding-delete-cancel').onclick();
+  await pending;
+  assert.equal(writes, 0);
+  pending = remove.onclick();
+  get('coding-delete-dialog').close(); // Escape/close without confirmation.
+  await pending;
+  assert.equal(writes, 0);
+  pending = remove.onclick();
+  get('coding-delete-confirm').onclick();
+  await pending;
+  assert.equal(writes, 1);
+  assert.equal(get('coding-history').children.length, 0);
+  assert.equal(get('coding-status').textContent, 'Conversation deleted from history.');
+});
+
 test('history titles rename inline on double-click with Enter and cancel with Escape', async () => {
   let title = 'Original', writes = 0;
   const {ui,get} = setup(async (url, request) => {
@@ -198,26 +286,26 @@ test('history titles rename inline on double-click with Enter and cancel with Es
   });
   await assert.rejects(ui.browse('/home/dev/project'), /Options unavailable/);
   const row = get('coding-history').children[0], button = row.children[0];
-  assert.equal(row.children.length,1);
+  assert.equal(row.children.length,2);
   button.ondblclick();
-  let input = row.children[1];
+  let input = row.children[2];
   assert.equal(input.tagName,'input');
   input.value = 'Discard';
   input.onkeydown({key:'Escape',preventDefault(){}});
   assert.equal(writes,0);
-  assert.equal(row.children.length,1);
-  button.ondblclick(); input = row.children[1]; input.value = 'Renamed';
+  assert.equal(row.children.length,2);
+  button.ondblclick(); input = row.children[2]; input.value = 'Renamed';
   await input.onkeydown({key:'Enter',preventDefault(){}});
   assert.equal(writes,1);
   assert.equal(button.textContent,'Renamed');
-  assert.equal(row.children.length,1);
+  assert.equal(row.children.length,2);
   button.onpointerup({pointerType:'touch'});
   button.onpointerup({pointerType:'touch'});
-  input = row.children[1];
+  input = row.children[2];
   assert.equal(input.tagName,'input');
   input.onkeydown({key:'Escape',preventDefault(){}});
   button.onkeydown({key:'F2',preventDefault(){}});
-  input = row.children[1]; input.value = 'Saved on blur';
+  input = row.children[2]; input.value = 'Saved on blur';
   await input.onblur();
   assert.equal(writes,2);
   assert.equal(button.textContent,'Saved on blur');

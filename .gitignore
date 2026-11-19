@@ -14,7 +14,6 @@ build/
 
 # Virtual Environment
 venv/
-.venv/
 .venv
 
 # IDE / Editor
@@ -34,9 +33,6 @@ data/
 
 # Logs
 *.log
-
-# Database migrations (generated)
-migrations/versions/__pycache__/
 
 # Certificate files
 tempCA/

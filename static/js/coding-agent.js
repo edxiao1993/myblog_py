@@ -13,9 +13,15 @@
   }
   function report(error) { el('status').textContent = error.message; el('directory-status').textContent = error.message; }
   function run(fn) { return (...args) => Promise.resolve(fn(...args)).catch(report); }
+  function setActivity(message = '') {
+    el('activity').textContent = message ? t(message) : '';
+    el('activity-spinner').hidden = !message;
+  }
   function setBusy(value) {
     busy = value;
-    document.querySelectorAll('#coding-app input, #coding-app select, #coding-app button, #coding-app textarea').forEach(node => { node.disabled = value && node.dataset.copy !== 'true'; });
+    if (!value) setActivity();
+    else if (running && el('activity-spinner').hidden) setActivity('Agent is working…');
+    document.querySelectorAll('#coding-app input, #coding-app select, #coding-app button, #coding-app textarea').forEach(node => { node.disabled = value && node.dataset.copy !== 'true' && node !== el('jump-latest'); });
     el('message').disabled = value && !running;
     el('send').disabled = (value && !running) || appending;
     el('stop').disabled = !running;
@@ -114,6 +120,13 @@
     tool(block.id, t('Thinking'), block.text, true, active);
   }
   function activityEvent(event) {
+    const updateType = event.assistantMessageEvent?.type;
+    if (event.type === 'tool_execution_start' || event.type === 'tool_execution_update') setActivity('Running a tool…');
+    else if (event.type === 'tool_execution_end') setActivity('Agent is working…');
+    else if (updateType === 'thinking_start' || updateType === 'thinking_delta') setActivity('Thinking…');
+    else if (updateType === 'thinking_end') setActivity('Agent is working…');
+    else if (updateType === 'text_delta') setActivity('Preparing a response…');
+    else if (event.type === 'done' || event.type === 'error') setActivity();
     if (event.type === 'message_start' && event.message?.role === 'assistant') thinkingBlocks = new Map();
     const update = event.assistantMessageEvent;
     if (event.type === 'message_update') {
@@ -158,13 +171,30 @@
       }
     }
   }
+  function confirmDelete(title) {
+    const dialog = el('delete-dialog');
+    el('delete-description').textContent = t('Delete "{title}" from history? Pi transcript files will be preserved.', {title});
+    return new Promise(resolve => {
+      dialog.returnValue = '';
+      dialog.onclose = () => { dialog.onclose = null; resolve(dialog.returnValue === 'delete'); };
+      el('delete-cancel').onclick = () => dialog.close('cancel');
+      el('delete-confirm').onclick = () => dialog.close('delete');
+      dialog.showModal();
+      el('delete-cancel').focus();
+    });
+  }
   async function history() {
     const sessions = await (await api('/sessions?project=' + encodeURIComponent(project))).json(); el('history').replaceChildren();
     for (const item of sessions.filter(item => item.project === project)) {
-      const button = document.createElement('button'); button.className = 'coding-history-btn btn btn-sm flex-grow-1 text-start text-break'; button.style.minWidth = '0'; button.textContent = item.title;
+      const button = document.createElement('button'); button.className = 'coding-history-btn btn btn-sm flex-grow-1 text-start text-break coding-history-title'; button.style.minWidth = '0'; button.textContent = item.title;
       button.dataset.sessionId = item.id;
       if (sid && item.id === sid) button.setAttribute('aria-current', 'true');
-      const row = document.createElement('div'); row.className = 'd-flex mb-1'; row.append(button); el('history').append(row);
+      const remove = document.createElement('button'); remove.type = 'button';
+      remove.className = 'btn btn-sm btn-outline-danger coding-history-delete';
+      const icon = document.createElement('span'); icon.setAttribute('aria-hidden', 'true'); icon.textContent = '×'; remove.append(icon);
+      remove.title = t('Delete');
+      remove.setAttribute('aria-label', t('Delete conversation: {title}', {title: item.title}));
+      const row = document.createElement('div'); row.className = 'coding-history-row d-flex mb-1'; row.append(button, remove); el('history').append(row);
       let clickTimer, editing = false, lastTap = 0;
       const open = run(async () => {
         if (busy || editing) return;
@@ -183,13 +213,26 @@
           await options(detail.session.settings.model, detail.session.settings.thinking);
         } finally { running = false; setBusy(false); }
       });
+      remove.onclick = run(async () => {
+        clearTimeout(clickTimer);
+        if (busy || editing || el('delete-dialog').open) return;
+        if (!await confirmDelete(item.title) || busy || editing) return;
+        setBusy(true);
+        try {
+          await api('/sessions/' + item.id + '/delete', {});
+          if (sid === item.id) { sid = ''; newTurn(); el('messages').replaceChildren(); }
+          await history();
+          el('status').textContent = t('Conversation deleted from history.');
+          el('new').focus();
+        } finally { setBusy(false); }
+      });
       const rename = () => {
         clearTimeout(clickTimer);
         if (busy || editing) return;
         editing = true; button.hidden = true;
         const input = document.createElement('input'); input.className = 'form-control'; input.value = item.title; input.maxLength = 200;
         input.setAttribute('aria-label', t('Session name'));
-        const restore = () => { editing = false; button.hidden = false; row.replaceChildren(button); };
+        const restore = () => { editing = false; button.hidden = false; row.replaceChildren(button, remove); };
         let saving = false;
         const save = async () => {
           if (!editing || saving) return;
@@ -198,7 +241,8 @@
           saving = true; setBusy(true);
           try {
             const metadata = await (await api('/sessions/' + item.id + '/name', {name})).json();
-            item.title = metadata.title; button.textContent = item.title; restore();
+            item.title = metadata.title; button.textContent = item.title;
+            remove.setAttribute('aria-label', t('Delete conversation: {title}', {title: item.title})); restore();
           } catch (error) { report(error); }
           finally { saving = false; setBusy(false); if (editing) input.focus(); }
         };
@@ -299,7 +343,7 @@
       } finally { appending = false; setBusy(busy); }
       return;
     }
-    setBusy(true); el('status').textContent = t('Working…');
+    setBusy(true); el('status').textContent = ''; setActivity('Agent is working…');
     try {
       if (!sid) {
         sid = (await (await api('/sessions', {...settings(), project})).json()).id;
@@ -319,6 +363,19 @@
   el('path').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); el('select').onclick(); } };
   el('browse').onclick = run(() => loadDirectory(el('path').value));
   el('create').onclick = run(() => loadDirectory(directory, el('folder-name').value));
+  function updateJump() {
+    const messages = el('messages');
+    el('jump-latest').hidden = messages.scrollHeight - messages.clientHeight - messages.scrollTop <= 4;
+  }
+  el('jump-latest').onclick = () => {
+    el('messages').scrollTop = el('messages').scrollHeight;
+    updateJump();
+  };
+  el('messages').onscroll = updateJump;
+  el('messages').addEventListener('load', updateJump, true);
+  new MutationObserver(updateJump).observe(el('messages'), {childList: true, subtree: true, characterData: true, attributes: true});
+  new ResizeObserver(updateJump).observe(el('messages'));
+  updateJump();
   el('new').onclick = () => { sid = ''; updateActiveSession(); newTurn(); el('messages').replaceChildren(); };
   el('model').onchange = run(async () => { setBusy(true); try { await options(el('model').value, el('thinking').value); } finally { setBusy(false); } });
   el('form').onsubmit = run(async event => { event.preventDefault(); if (el('message').value.trim()) await send(el('message').value.trim()); });

@@ -622,6 +622,34 @@ for line in sys.stdin:
         self.login(2)
         self.assertEqual(self.client.get(f'/coding/api/pi/sessions/{sid}').status_code, 404)
 
+    def test_coding_delete_requires_csrf_ownership_and_idle_session(self):
+        from services.coding_service import CodingService
+        root = Path(self.temp.name).resolve()
+        self.app.config['CODING_PROJECT_ROOT'] = str(root)
+        sid = self.client.post('/coding/api/pi/sessions', json={'project': str(root)}, headers=self.headers).json['id']
+        url = f'/coding/api/pi/sessions/{sid}/delete'
+        agent = CodingService(self.app.config)
+        path = agent.folder(User(1), sid)
+        (path / 'session.jsonl').write_text('native transcript')
+        (path / 'messages.jsonl').write_text('web transcript')
+        self.assertEqual(self.client.post(url, json={}).status_code, 403)
+        self.login(2)
+        self.assertEqual(self.client.post(url, json={}, headers=self.headers).status_code, 404)
+        self.login(1)
+        lock = agent.acquire(path)
+        try:
+            self.assertEqual(self.client.post(url, json={}, headers=self.headers).status_code, 409)
+        finally:
+            lock.close()
+        self.assertEqual(self.client.post(url, json={}, headers=self.headers).status_code, 200)
+        self.assertEqual(self.client.get('/coding/api/pi/sessions').json, [])
+        self.assertEqual(self.client.get(f'/coding/api/pi/sessions/{sid}/detail').status_code, 404)
+        self.assertEqual((path / 'session.jsonl').read_text(), 'native transcript')
+        self.assertEqual((path / 'messages.jsonl').read_text(), 'web transcript')
+        with self.assertRaises(FileNotFoundError):
+            agent.acquire(path)
+        self.assertEqual(self.client.post(url, json={}, headers=self.headers).status_code, 404)
+
     def test_coding_rename_validates_access_lock_and_persists_title(self):
         from services.coding_service import CodingService
         root = Path(self.temp.name).resolve()
