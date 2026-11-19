@@ -303,6 +303,8 @@
   "Enter a valid folder name.": "请输入有效的文件夹名称。",
   "Request failed.": "请求失败。",
   "Choose project folder": "选择项目文件夹",
+  "Choose": "选择",
+  "choose": "选择",
   "Browse folders": "浏览文件夹",
   "Use this folder": "使用此文件夹",
   "Choose command": "选择命令",

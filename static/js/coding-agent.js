@@ -149,10 +149,21 @@
       messageCard(message.role, content(message));
     }
   }
+  function updateActiveSession() {
+    for (const row of el('history').children) {
+      const btn = row.children[0];
+      if (btn && btn.tagName && btn.tagName.toUpperCase() === 'BUTTON') {
+        const active = Boolean(sid && btn.dataset.sessionId === sid);
+        btn.setAttribute('aria-current', active ? 'true' : 'false');
+      }
+    }
+  }
   async function history() {
     const sessions = await (await api('/sessions?project=' + encodeURIComponent(project))).json(); el('history').replaceChildren();
     for (const item of sessions.filter(item => item.project === project)) {
-      const button = document.createElement('button'); button.className = 'btn btn-sm btn-outline-secondary flex-grow-1 text-start text-break'; button.style.minWidth = '0'; button.textContent = item.title;
+      const button = document.createElement('button'); button.className = 'coding-history-btn btn btn-sm flex-grow-1 text-start text-break'; button.style.minWidth = '0'; button.textContent = item.title;
+      button.dataset.sessionId = item.id;
+      if (sid && item.id === sid) button.setAttribute('aria-current', 'true');
       const row = document.createElement('div'); row.className = 'd-flex mb-1'; row.append(button); el('history').append(row);
       let clickTimer, editing = false, lastTap = 0;
       const open = run(async () => {
@@ -160,7 +171,7 @@
         setBusy(true);
         try {
           const detail = await (await api('/sessions/' + item.id + '/detail')).json();
-          sid = item.id; el('messages').replaceChildren(); newTurn();
+          sid = item.id; updateActiveSession(); el('messages').replaceChildren(); newTurn();
           const active = detail.active_run;
           const current = active ? detail.messages.findIndex(message => message.id === active.user_message_id) : -1;
           (current < 0 ? detail.messages : detail.messages.slice(0, current)).forEach(render);
@@ -308,7 +319,7 @@
   el('path').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); el('select').onclick(); } };
   el('browse').onclick = run(() => loadDirectory(el('path').value));
   el('create').onclick = run(() => loadDirectory(directory, el('folder-name').value));
-  el('new').onclick = () => { sid = ''; newTurn(); el('messages').replaceChildren(); };
+  el('new').onclick = () => { sid = ''; updateActiveSession(); newTurn(); el('messages').replaceChildren(); };
   el('model').onchange = run(async () => { setBusy(true); try { await options(el('model').value, el('thinking').value); } finally { setBusy(false); } });
   el('form').onsubmit = run(async event => { event.preventDefault(); if (el('message').value.trim()) await send(el('message').value.trim()); });
   el('message').onkeydown = event => {

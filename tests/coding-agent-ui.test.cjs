@@ -410,3 +410,25 @@ test('grouped parallel work stays expanded until the last tool finishes, and err
   assert.equal(group.open,false);
   assert.equal(group.children[1].children.at(-1).open,false);
 });
+
+test('opening history highlights the active conversation and resets on new chat', async () => {
+  const {ui,get} = setup(async url => {
+    if (url.includes('/options')) throw new Error('Options unavailable');
+    const data = url.includes('/projects') ? {path:'/home/dev/project',folders:[]} : url.endsWith('/detail') ? {session:{settings:{model:'test/model',thinking:''}},messages:[]} : [{id:'sess-1',project:'/home/dev/project',title:'Chat 1'},{id:'sess-2',project:'/home/dev/project',title:'Chat 2'}];
+    return {ok:true,json:async () => data};
+  });
+  await assert.rejects(ui.browse('/home/dev/project'), /Options unavailable/);
+  const rows = get('coding-history').children;
+  assert.equal(rows.length, 2);
+  const btn1 = rows[0].children[0], btn2 = rows[1].children[0];
+  assert.equal(btn1['aria-current'], undefined);
+  await btn1.onclick({detail:0});
+  assert.equal(btn1['aria-current'], 'true');
+  assert.equal(btn2['aria-current'], 'false');
+  await btn2.onclick({detail:0});
+  assert.equal(btn1['aria-current'], 'false');
+  assert.equal(btn2['aria-current'], 'true');
+  get('coding-new').onclick();
+  assert.equal(btn1['aria-current'], 'false');
+  assert.equal(btn2['aria-current'], 'false');
+});

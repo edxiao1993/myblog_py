@@ -75,7 +75,7 @@ class LanguageTests(unittest.TestCase):
             self.assertNotIn('coding-sidebar-toggle', body)
             self.assertNotIn('coding-sidebar-show', body)
             self.assertNotIn('data-sidebar-hidden', body)
-            self.assertIn('grid-template-columns:190px minmax(0,1fr)', body)
+            self.assertIn('grid-template-columns:240px minmax(0,1fr)', body)
             self.assertIn('id="coding-sidebar" class="card p-2"', body)
             self.assertNotIn('custom-prompt', body)
             self.assertIn('<dialog id="coding-directory-dialog"', body)

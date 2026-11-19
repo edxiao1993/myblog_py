@@ -1,17 +1,34 @@
 {% extends 'base.html' %}
 {% block content %}
 <style>
-.coding-layout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:.75rem}.coding-chat{min-width:0}#coding-messages{height:65vh;overflow:auto;overflow-wrap:anywhere}#coding-messages pre{white-space:pre-wrap;margin:0}#coding-folders{max-height:35vh;overflow:auto}#coding-history{max-height:65vh;overflow:auto}.coding-controls{display:flex;gap:.375rem;align-items:end}.coding-controls label{flex:1;min-width:0;font-size:.75rem}.coding-controls select{width:100%;min-width:0;text-overflow:ellipsis;font-size:.75rem;padding:.15rem 1.5rem .15rem .4rem}#coding-directory-dialog{width:min(560px,calc(100vw - 2rem));max-height:85vh;overflow:auto;border:0;border-radius:.75rem;padding:1.5rem}#coding-directory-dialog::backdrop{background:rgba(0,0,0,.45)}@media(max-width:767px){.coding-layout{grid-template-columns:1fr}.coding-layout>aside,.coding-chat>.coding-controls{display:none}#coding-messages{height:60vh}}
+.coding-layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:1rem}.coding-chat{min-width:0}#coding-messages{height:65vh;overflow:auto;overflow-wrap:anywhere}#coding-messages pre{white-space:pre-wrap;margin:0}#coding-folders{max-height:35vh;overflow:auto}#coding-history{max-height:58vh;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin}.coding-controls{display:flex;gap:.375rem;align-items:end}.coding-controls label{flex:1;min-width:0;font-size:.75rem}.coding-controls select{width:100%;min-width:0;text-overflow:ellipsis;font-size:.75rem;padding:.15rem 1.5rem .15rem .4rem}#coding-directory-dialog{width:min(560px,calc(100vw - 2rem));max-height:85vh;overflow:auto;border:0;border-radius:.75rem;padding:1.5rem}#coding-directory-dialog::backdrop{background:rgba(0,0,0,.45)}@media(max-width:767px){.coding-layout{grid-template-columns:1fr}.coding-layout>aside,.coding-chat>.coding-controls{display:none}#coding-messages{height:60vh}}
 #coding-messages .coding-user-message{align-self:flex-end;margin-left:auto;width:fit-content;max-width:85%;min-width:0;flex-shrink:0;background-color:#e7f3ff;color:#16324f;border-color:#c6e2ff!important}
 #coding-messages .coding-markdown>:last-child{margin-bottom:0}#coding-messages .coding-markdown pre{white-space:pre;overflow-x:auto;padding:.75rem;background:rgba(127,127,127,.1);border-radius:.375rem}#coding-messages .coding-markdown table{display:block;max-width:100%;overflow-x:auto}#coding-messages .coding-markdown th,#coding-messages .coding-markdown td{padding:.375rem;border:1px solid #adb5bd}#coding-messages .coding-markdown img{max-width:100%;height:auto}
 #coding-messages .coding-copy{display:block;margin-left:auto;min-height:18px;padding:1px 4px;font-size:.65rem;line-height:1.2}
+.coding-sidebar-project{background:rgba(0,0,0,.03);border:1px solid rgba(0,0,0,.08);border-radius:.5rem;padding:.5rem .625rem}
+.coding-history-btn{border:1px solid transparent;background:transparent;color:inherit;border-radius:.375rem;padding:.375rem .5rem;font-size:.8rem;line-height:1.35;text-align:left;width:100%;min-width:0;transition:background-color .15s ease,border-color .15s ease,color .15s ease}
+.coding-history-btn:hover{background:rgba(0,0,0,.05);color:inherit}
+.coding-history-btn[aria-current="true"]{background:#e7f3ff;color:#0d6efd;border-color:#b6d4fe;font-weight:500}
+html[data-theme="dark"] .coding-sidebar-project{background:rgba(255,255,255,.04);border-color:var(--app-border)}
+html[data-theme="dark"] .coding-history-btn{color:var(--app-text-secondary)}
+html[data-theme="dark"] .coding-history-btn:hover{background:#334155;color:var(--app-text)}
+html[data-theme="dark"] .coding-history-btn[aria-current="true"]{background:#1e3a5f;color:#93c5fd;border-color:#2b5282;font-weight:500}
 </style>
 <div id="coding-app" data-user-id="{{ current_user.get_id() or '' }}" data-csrf="{{ csrf }}" class="container py-3">
 <div class="coding-layout">
 <aside id="coding-sidebar" class="card p-2">
-<button id="coding-directory" class="btn btn-sm btn-outline-primary" aria-haspopup="dialog">{{ _('Choose project folder') }}</button>
-<span id="coding-project-name" class="small text-muted text-break mt-2"></span>
-<hr><button id="coding-new" class="btn btn-sm btn-primary">{{ _('New conversation') }}</button><h2 class="h6 mt-3">{{ _('History') }}</h2><div id="coding-history"></div>
+<div class="coding-sidebar-project mb-2">
+<div class="d-flex align-items-center gap-1 mb-2 min-width-0">
+<span class="text-primary flex-shrink-0" aria-hidden="true"><svg width="15" height="15" fill="currentColor" viewBox="0 0 16 16"><path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3h3.982a2 2 0 0 1 1.992 2.181l-.637 7A2 2 0 0 1 13.174 14H2.826a2 2 0 0 1-1.991-1.819l-.637-7a1.99 1.99 0 0 1 .342-1.31zM2.19 4a1 1 0 0 0-.996 1.09l.637 7a1 1 0 0 0 .995.91h10.348a1 1 0 0 0 .995-.91l.637-7A1 1 0 0 0 13.81 4H2.19zm4.69-1.707A1 1 0 0 0 6.172 2H2.5a1 1 0 0 0-1 .981l.006.139C1.72 3.042 1.95 3 2.19 3h4.69z"/></svg></span>
+<span id="coding-project-name" class="small fw-semibold text-break text-truncate flex-grow-1" style="font-size:.8rem;"></span>
+</div>
+<div class="d-flex gap-1">
+<button id="coding-directory" class="btn btn-sm btn-outline-primary flex-grow-1 py-1" style="font-size:.75rem;" aria-haspopup="dialog" title="{{ _('Choose project folder') }}">{{ _('Choose') }}</button>
+<button id="coding-new" class="btn btn-sm btn-primary px-2.5 py-1 d-flex align-items-center justify-content-center shadow-xs" title="{{ _('New conversation') }}" aria-label="{{ _('New conversation') }}"><svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2z"/></svg></button>
+</div>
+</div>
+<div class="d-flex align-items-center justify-content-between mb-1 px-1"><h2 class="h6 mb-0 text-muted text-uppercase fw-semibold" style="font-size:.68rem;letter-spacing:.04em;">{{ _('History') }}</h2></div>
+<div id="coding-history" class="flex-grow-1"></div>
 </aside>
 <main class="coding-chat">
 <div class="coding-controls mb-2">
