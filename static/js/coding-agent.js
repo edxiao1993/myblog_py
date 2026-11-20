@@ -21,7 +21,7 @@
     busy = value;
     if (!value) setActivity();
     else if (running && el('activity-spinner').hidden) setActivity('Agent is working…');
-    document.querySelectorAll('#coding-app input, #coding-app select, #coding-app button, #coding-app textarea').forEach(node => { node.disabled = value && node.dataset.copy !== 'true' && node !== el('jump-latest'); });
+    document.querySelectorAll('#coding-app input, #coding-app select, #coding-app button, #coding-app textarea').forEach(node => { node.disabled = value && node.dataset.copy !== 'true' && node !== el('jump-latest') && node !== el('sidebar-toggle'); });
     el('message').disabled = value && !running;
     el('send').disabled = (value && !running) || appending;
     el('stop').disabled = !running;
@@ -162,6 +162,12 @@
       messageCard(message.role, content(message));
     }
   }
+  function setSidebar(open) {
+    el('sidebar').dataset.mobileOpen = String(open);
+    el('sidebar-toggle').setAttribute('aria-expanded', String(open));
+    if (!open) el('sidebar-toggle').focus();
+  }
+  el('sidebar-toggle').onclick = () => setSidebar(el('sidebar').dataset.mobileOpen !== 'true');
   function updateActiveSession() {
     for (const row of el('history').children) {
       const btn = row.children[0];
@@ -194,14 +200,19 @@
       const icon = document.createElement('span'); icon.setAttribute('aria-hidden', 'true'); icon.textContent = '×'; remove.append(icon);
       remove.title = t('Delete');
       remove.setAttribute('aria-label', t('Delete conversation: {title}', {title: item.title}));
-      const row = document.createElement('div'); row.className = 'coding-history-row d-flex mb-1'; row.append(button, remove); el('history').append(row);
+      const edit = document.createElement('button'); edit.type = 'button';
+      edit.className = 'btn btn-sm btn-outline-secondary coding-history-rename';
+      const editIcon = document.createElement('span'); editIcon.setAttribute('aria-hidden', 'true'); editIcon.textContent = '✎'; edit.append(editIcon);
+      edit.setAttribute('aria-label', t('Rename conversation: {title}', {title: item.title}));
+      edit.title = t('Rename conversation');
+      const row = document.createElement('div'); row.className = 'coding-history-row d-flex mb-1'; row.append(button, remove, edit); el('history').append(row);
       let clickTimer, editing = false, lastTap = 0;
       const open = run(async () => {
         if (busy || editing) return;
         setBusy(true);
         try {
           const detail = await (await api('/sessions/' + item.id + '/detail')).json();
-          sid = item.id; updateActiveSession(); el('messages').replaceChildren(); newTurn();
+          sid = item.id; updateActiveSession(); setSidebar(false); el('messages').replaceChildren(); newTurn();
           const active = detail.active_run;
           const current = active ? detail.messages.findIndex(message => message.id === active.user_message_id) : -1;
           (current < 0 ? detail.messages : detail.messages.slice(0, current)).forEach(render);
@@ -229,10 +240,10 @@
       const rename = () => {
         clearTimeout(clickTimer);
         if (busy || editing) return;
-        editing = true; button.hidden = true;
+        editing = true; button.hidden = true; row.dataset.editing = 'true';
         const input = document.createElement('input'); input.className = 'form-control'; input.value = item.title; input.maxLength = 200;
         input.setAttribute('aria-label', t('Session name'));
-        const restore = () => { editing = false; button.hidden = false; row.replaceChildren(button, remove); };
+        const restore = () => { editing = false; delete row.dataset.editing; button.hidden = false; row.replaceChildren(button, remove, edit); };
         let saving = false;
         const save = async () => {
           if (!editing || saving) return;
@@ -242,7 +253,8 @@
           try {
             const metadata = await (await api('/sessions/' + item.id + '/name', {name})).json();
             item.title = metadata.title; button.textContent = item.title;
-            remove.setAttribute('aria-label', t('Delete conversation: {title}', {title: item.title})); restore();
+            remove.setAttribute('aria-label', t('Delete conversation: {title}', {title: item.title}));
+            edit.setAttribute('aria-label', t('Rename conversation: {title}', {title: item.title})); restore();
           } catch (error) { report(error); }
           finally { saving = false; setBusy(false); if (editing) input.focus(); }
         };
@@ -252,8 +264,17 @@
           if (event.key === 'Enter') { event.preventDefault(); return save(); }
         };
         input.onblur = save;
-        row.append(input); input.focus(); input.select();
+        const actions = document.createElement('div'); actions.className = 'coding-history-edit-actions';
+        const saveButton = document.createElement('button'); saveButton.type = 'button'; saveButton.className = 'btn btn-sm btn-primary'; saveButton.textContent = t('Save');
+        const cancelButton = document.createElement('button'); cancelButton.type = 'button'; cancelButton.className = 'btn btn-sm btn-outline-secondary'; cancelButton.textContent = t('Cancel');
+        // Keep focus in the editor until the touch action runs, before blur-save.
+        saveButton.onpointerdown = cancelButton.onpointerdown = event => event.preventDefault();
+        saveButton.onclick = run(save);
+        cancelButton.onclick = () => { if (!saving) { restore(); edit.focus(); } };
+        actions.append(saveButton, cancelButton);
+        row.append(input, actions); input.focus(); input.select();
       };
+      edit.onclick = rename;
       button.title = t('Double-click to rename. Enter to save, Escape to cancel.');
       button.setAttribute('aria-keyshortcuts', 'F2');
       button.onclick = event => {
@@ -359,7 +380,7 @@
   }
   el('directory').onclick = run(async () => { el('directory-dialog').showModal(); await loadDirectory(project); });
   el('directory-close').onclick = () => el('directory-dialog').close();
-  el('select').onclick = run(async () => { await browse(el('path').value); el('directory-dialog').close(); });
+  el('select').onclick = run(async () => { await browse(el('path').value); el('directory-dialog').close(); setSidebar(false); });
   el('path').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); el('select').onclick(); } };
   el('browse').onclick = run(() => loadDirectory(el('path').value));
   el('create').onclick = run(() => loadDirectory(directory, el('folder-name').value));
@@ -376,7 +397,7 @@
   new MutationObserver(updateJump).observe(el('messages'), {childList: true, subtree: true, characterData: true, attributes: true});
   new ResizeObserver(updateJump).observe(el('messages'));
   updateJump();
-  el('new').onclick = () => { sid = ''; updateActiveSession(); newTurn(); el('messages').replaceChildren(); };
+  el('new').onclick = () => { sid = ''; updateActiveSession(); setSidebar(false); newTurn(); el('messages').replaceChildren(); el('message').focus(); };
   el('model').onchange = run(async () => { setBusy(true); try { await options(el('model').value, el('thinking').value); } finally { setBusy(false); } });
   el('form').onsubmit = run(async event => { event.preventDefault(); if (el('message').value.trim()) await send(el('message').value.trim()); });
   el('message').onkeydown = event => {

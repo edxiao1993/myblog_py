@@ -88,7 +88,11 @@ class LanguageTests(unittest.TestCase):
             self.assertIn('☀', navbar)
             self.assertIn('☾', navbar)
             self.assertIn('aria-label="' + ('夜间模式' if language == 'zh-CN' else 'Night view') + '"', navbar)
-            self.assertNotIn('coding-sidebar-toggle', body)
+            self.assertIn('id="coding-sidebar-toggle"', body)
+            self.assertIn('aria-controls="coding-sidebar" aria-expanded="false"', body)
+            self.assertIn('项目与历史记录' if language == 'zh-CN' else 'Project and history', body)
+            self.assertIn('css/coding-mobile.css', body)
+            self.assertNotIn('.coding-layout>aside,.coding-chat>.coding-controls{display:none}', body)
             self.assertNotIn('coding-sidebar-show', body)
             self.assertNotIn('data-sidebar-hidden', body)
             self.assertIn('grid-template-columns:240px minmax(0,1fr)', body)
@@ -101,6 +105,8 @@ class LanguageTests(unittest.TestCase):
             self.assertIn('id="coding-activity" role="status" aria-live="polite"></span>', body)
             self.assertIn('id="coding-message" aria-label="' + ('消息' if language == 'zh-CN' else 'Message') + '"', body)
             catalog = json.loads(body.split('<script id="i18n-data" type="application/json">')[1].split('</script>')[0])['messages']
+            self.assertEqual(catalog.get('Rename conversation', 'Rename conversation'), '重命名对话' if language == 'zh-CN' else 'Rename conversation')
+            self.assertEqual(catalog.get('Rename conversation: {title}', 'Rename conversation: {title}'), '重命名对话：{title}' if language == 'zh-CN' else 'Rename conversation: {title}')
             self.assertEqual(catalog.get('Agent is working…', 'Agent is working…'), '助手正在处理…' if language == 'zh-CN' else 'Agent is working…')
             self.assertEqual(catalog.get('Running a tool…', 'Running a tool…'), '正在运行工具…' if language == 'zh-CN' else 'Running a tool…')
             self.assertIn('prefers-reduced-motion:reduce', body)
@@ -122,6 +128,18 @@ class LanguageTests(unittest.TestCase):
             self.assertIn('选择项目文件夹' if language == 'zh-CN' else 'Choose project folder', body)
             self.assertIn('浏览文件夹' if language == 'zh-CN' else 'Browse folders', body)
 
+
+    def test_coding_mobile_css_keeps_settings_and_touch_actions_available(self):
+        css = Path('static/css/coding-mobile.css').read_text()
+        self.assertIn('@media(max-width:767px)', css)
+        self.assertIn('#coding-sidebar:not([data-mobile-open="true"])', css)
+        self.assertIn('grid-template-columns: repeat(2, minmax(0, 1fr))', css)
+        self.assertIn('grid-column: 1 / -1', css)
+        self.assertIn('font-size: 16px', css)
+        self.assertIn('min-height: 44px', css)
+        self.assertIn('max-height: 85dvh', css)
+        self.assertIn('flex-wrap: wrap', css)
+        self.assertIn('#coding-app .coding-history-rename', css)
 
     def test_general_prompt_option_is_default_and_translated(self):
         for language, label in [('en', 'General assistant'), ('zh-CN', '通用助手')]:
@@ -149,6 +167,8 @@ class LanguageTests(unittest.TestCase):
             self.assertIn(placeholder, body)
             self.assertIn(settings, body)
             self.assertIn('Jump to latest' if language == 'en' else '跳到最新消息', body)
+            mobile_menu = body.split('<nav class="pi-mobile-navigation')[1].split('</nav>')[0]
+            self.assertIn('<a href="/test/coding_agent.page">' + ('Coding Agent' if language == 'en' else '编程代理') + '</a>', mobile_menu)
             self.assertIn('id="pi-language-choice"', body)
             self.assertIn('name="csrf_token"', body)
             self.assertIn('name="next" value="/preview/pi_agent?"', body)
@@ -199,7 +219,7 @@ class LanguageTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         literal = r"(?:'(?:\\.|[^'\\])*')|(?:\"(?:\\.|[^\"\\])*\")"
         pattern = re.compile(r"(?<![\w])(?:_|t|status)\(\s*(" + literal + r")")
-        for path in [*root.joinpath('templates').glob('*.html'), root / 'static/js/pi-agent.js', root / 'static/js/moments.js']:
+        for path in [*root.joinpath('templates').glob('*.html'), root / 'static/js/pi-agent.js', root / 'static/js/coding-agent.js', root / 'static/js/moments.js']:
             for match in pattern.finditer(path.read_text()):
                 key = ast.literal_eval(match[1])
                 self.assertIn(key, ZH_CN, f'Missing Chinese translation: {path.name}: {key}')

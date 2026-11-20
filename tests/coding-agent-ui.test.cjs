@@ -9,6 +9,7 @@ class Element {
   close(value = '') { this.returnValue = value; this.open = false; this.onclose?.(); }
   focus() {}
   select() {}
+  add(option) { this.append(option); }
   setAttribute(name,value) { this[name] = value; }
   append(...nodes) { nodes.forEach(node => {node.parentElement = this; this.children.push(node);}); }
   replaceWith(node) { const p = this.parentElement; p.children[p.children.indexOf(this)] = node; node.parentElement = p; }
@@ -21,7 +22,7 @@ function setup(fetch, storedProject = null) {
   class Observer { constructor(callback) { observers.push(callback); } observe() {} }
   const clipboard = {writeText:async text => {copied.push(text);}};
   const get = id => { if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id); };
-  const context = {fetch, MutationObserver:Observer, ResizeObserver:Observer, localStorage:{getItem:key => stored.get(key) ?? null,setItem:(key,value) => stored.set(key,value)}, navigator:{clipboard}, TextDecoder, setTimeout, clearTimeout, marked:require('../static/js/marked.min.js'), DOMPurify:{sanitize:html => 'sanitized:' + html}, document: {getElementById:get, querySelectorAll:() => [get('coding-jump-latest')], createElement:tag => new Element(tag)}, window:{AppI18n:{t:(s,v) => s.replace(/\{(\w+)\}/g, (match, key) => v?.[key] ?? match)}}};
+  const context = {fetch, Option:class extends Element { constructor(text, value) { super('option'); this.textContent = text; this.value = value; } }, MutationObserver:Observer, ResizeObserver:Observer, localStorage:{getItem:key => stored.get(key) ?? null,setItem:(key,value) => stored.set(key,value)}, navigator:{clipboard}, TextDecoder, setTimeout, clearTimeout, marked:require('../static/js/marked.min.js'), DOMPurify:{sanitize:html => 'sanitized:' + html}, document: {getElementById:get, querySelectorAll:() => [get('coding-jump-latest'), get('coding-sidebar-toggle')], createElement:tag => new Element(tag)}, window:{AppI18n:{t:(s,v) => s.replace(/\{(\w+)\}/g, (match, key) => v?.[key] ?? match)}}};
   vm.createContext(context);
   vm.runInContext(readFileSync('static/js/coding-agent.js','utf8').replace("  initialize().catch(report);", '  window.test = {tool, render, newTurn, browse, updateMarkdown, send, thinking, initialize, activityEvent, setBusy};'),context);
   return {observers, stored, copied, clipboard, ui:context.window.test, window:context.window, get, messages:get('coding-messages')};
@@ -277,7 +278,54 @@ test('history deletion asks for confirmation and refreshes only after success', 
   assert.equal(get('coding-status').textContent, 'Conversation deleted from history.');
 });
 
-test('history titles rename inline on double-click with Enter and cancel with Escape', async () => {
+test('mobile project/history navigation can collapse even while the agent is busy', () => {
+  const {get, ui} = setup();
+  const toggle = get('coding-sidebar-toggle'), sidebar = get('coding-sidebar');
+  toggle.onclick();
+  assert.equal(sidebar.dataset.mobileOpen, 'true');
+  assert.equal(toggle['aria-expanded'], 'true');
+  ui.setBusy(true);
+  assert.equal(toggle.disabled, false);
+  toggle.onclick();
+  assert.equal(sidebar.dataset.mobileOpen, 'false');
+  assert.equal(toggle['aria-expanded'], 'false');
+  ui.setBusy(false);
+  toggle.onclick();
+  get('coding-new').onclick();
+  assert.equal(sidebar.dataset.mobileOpen, 'false');
+});
+
+test('mobile navigation can choose/create folders and load model, thinking and command controls', async () => {
+  const requests = [];
+  const {get, ui, stored} = setup(async (url, request) => {
+    requests.push({url, request});
+    let data = [];
+    if (url.includes('/projects')) data = {path:'/home/dev/project',parent:'/home/dev',folders:[]};
+    if (url.includes('/options')) data = {models:[{provider:'test',id:'model'}],levels:['low','high'],commands:[{name:'review',description:'Review'}]};
+    return {ok:true,json:async () => data};
+  });
+  await ui.initialize();
+  get('coding-sidebar-toggle').onclick();
+  await get('coding-directory').onclick();
+  assert.equal(get('coding-directory-dialog').open, true);
+  get('coding-folder-name').value = 'new-folder';
+  await get('coding-create').onclick();
+  assert.equal(JSON.parse(requests.at(-1).request.body).name, 'new-folder');
+  await get('coding-select').onclick();
+  assert.equal(get('coding-directory-dialog').open, false);
+  assert.equal(get('coding-sidebar').dataset.mobileOpen, 'false');
+  assert.equal(stored.get('coding-agent-project-default'), '/home/dev/project');
+  get('coding-model').value = 'test/model';
+  await get('coding-model').onchange();
+  assert.equal(get('coding-model').value, 'test/model');
+  assert.equal(get('coding-thinking').children.at(-1).value, 'high');
+  assert.equal(get('coding-command').children.at(-1).value, 'review');
+  get('coding-command').value = 'reload';
+  await get('coding-command').onchange();
+  assert.equal(get('coding-status').textContent, 'Project commands and settings reloaded.');
+});
+
+test('history titles rename with touch button, double-click, keyboard and blur', async () => {
   let title = 'Original', writes = 0;
   const {ui,get} = setup(async (url, request) => {
     if (url.includes('/options')) throw new Error('Options unavailable');
@@ -286,29 +334,42 @@ test('history titles rename inline on double-click with Enter and cancel with Es
   });
   await assert.rejects(ui.browse('/home/dev/project'), /Options unavailable/);
   const row = get('coding-history').children[0], button = row.children[0];
-  assert.equal(row.children.length,2);
-  button.ondblclick();
-  let input = row.children[2];
+  assert.equal(row.children.length,3);
+  const edit = row.children[2];
+  assert.equal(edit['aria-label'], 'Rename conversation: Original');
+  edit.onclick();
+  let input = row.children[3];
   assert.equal(input.tagName,'input');
   input.value = 'Discard';
-  input.onkeydown({key:'Escape',preventDefault(){}});
+  const cancel = row.children[4].children[1];
+  let preventedBlur = false;
+  cancel.onpointerdown({preventDefault() { preventedBlur = true; }});
+  assert.equal(preventedBlur, true);
+  cancel.onclick();
   assert.equal(writes,0);
-  assert.equal(row.children.length,2);
-  button.ondblclick(); input = row.children[2]; input.value = 'Renamed';
+  assert.equal(row.children.length,3);
+  button.ondblclick(); input = row.children[3]; input.value = 'Renamed';
   await input.onkeydown({key:'Enter',preventDefault(){}});
   assert.equal(writes,1);
   assert.equal(button.textContent,'Renamed');
-  assert.equal(row.children.length,2);
+  assert.equal(row.children.length,3);
+  assert.equal(edit['aria-label'], 'Rename conversation: Renamed');
   button.onpointerup({pointerType:'touch'});
   button.onpointerup({pointerType:'touch'});
-  input = row.children[2];
+  input = row.children[3];
   assert.equal(input.tagName,'input');
   input.onkeydown({key:'Escape',preventDefault(){}});
   button.onkeydown({key:'F2',preventDefault(){}});
-  input = row.children[2]; input.value = 'Saved on blur';
+  input = row.children[3]; input.value = 'Saved on blur';
   await input.onblur();
   assert.equal(writes,2);
   assert.equal(button.textContent,'Saved on blur');
+  edit.onclick();
+  row.children[3].value = 'Saved by touch';
+  await row.children[4].children[0].onclick();
+  assert.equal(writes,3);
+  assert.equal(button.textContent,'Saved by touch');
+  assert.equal(row.dataset.editing, undefined);
 
 });
 
@@ -506,11 +567,14 @@ test('opening history highlights the active conversation and resets on new chat'
     return {ok:true,json:async () => data};
   });
   await assert.rejects(ui.browse('/home/dev/project'), /Options unavailable/);
+  get('coding-sidebar-toggle').onclick();
+  assert.equal(get('coding-sidebar').dataset.mobileOpen, 'true');
   const rows = get('coding-history').children;
   assert.equal(rows.length, 2);
   const btn1 = rows[0].children[0], btn2 = rows[1].children[0];
   assert.equal(btn1['aria-current'], undefined);
   await btn1.onclick({detail:0});
+  assert.equal(get('coding-sidebar').dataset.mobileOpen, 'false');
   assert.equal(btn1['aria-current'], 'true');
   assert.equal(btn2['aria-current'], 'false');
   await btn2.onclick({detail:0});

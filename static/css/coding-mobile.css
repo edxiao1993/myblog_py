@@ -1,0 +1,61 @@
+/* Keep one set of controls for desktop and mobile. Only navigation collapses. */
+.coding-history-rename, .coding-history-edit-actions { display: none; }
+@media(max-width:767px) {
+  #coding-app.container { padding-inline: 0 !important; }
+  #coding-sidebar:not([data-mobile-open="true"]) { display: none; }
+  #coding-sidebar { min-width: 0; }
+  #coding-history { max-height: 45vh; max-height: 45svh; }
+  #coding-app .coding-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .5rem;
+  }
+  #coding-app .coding-controls label { font-size: .875rem; }
+  #coding-app .coding-controls label:first-child { grid-column: 1 / -1; }
+  #coding-app .form-select, #coding-app .form-control {
+    font-size: 16px; /* Prevent iOS focus zoom. */
+    min-height: 44px;
+  }
+  #coding-app .form-select { padding: .5rem 2rem .5rem .625rem; }
+  #coding-app .btn, #coding-app summary { min-height: 44px; }
+  #coding-messages {
+    height: 50vh;
+    height: 50svh;
+    min-height: 180px;
+    overscroll-behavior-y: contain;
+  }
+  #coding-app .coding-history-btn.coding-history-title {
+    padding: .75rem 94px .75rem .5rem;
+    font-size: .9rem;
+    overflow-wrap: anywhere;
+  }
+  #coding-app .coding-history-delete, #coding-app .coding-history-rename {
+    width: 44px;
+    height: 44px;
+    min-height: 44px !important;
+    padding: 0;
+    top: 2px;
+  }
+  #coding-app .coding-history-rename {
+    display: inline-flex;
+    position: absolute;
+    right: 48px;
+    align-items: center;
+    justify-content: center;
+  }
+  #coding-history .coding-history-row[data-editing="true"] { flex-wrap: wrap; gap: .5rem; }
+  #coding-history .coding-history-row[data-editing="true"] > button { display: none; }
+  #coding-history .coding-history-edit-actions { display: flex; gap: .5rem; width: 100%; }
+  #coding-history .coding-history-edit-actions .btn { flex: 1; }
+  #coding-history .form-control { min-width: 0; }
+  #coding-app #coding-jump-latest { width: 44px; height: 44px; font-size: 1rem; }
+  #coding-messages .coding-copy { min-height: 44px; padding: .25rem .5rem; font-size: .75rem; }
+  #coding-messages pre, #coding-messages .coding-markdown { min-width: 0; max-width: 100%; }
+  #coding-app dialog { max-height: 85vh; max-height: 85dvh; padding: 1rem; }
+  #coding-app .coding-folder-actions, #coding-app .coding-folder-create { flex-wrap: wrap; }
+  #coding-app .coding-folder-create input { flex: 1 1 100%; min-width: 0; }
+  #coding-app .coding-folder-actions .btn, #coding-app .coding-folder-create .btn { flex: 1 1 auto; }
+  #coding-directory-close { min-width: 44px; min-height: 44px; padding: .75rem; }
+  #coding-folders .btn { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+  #coding-status, #coding-directory-status { overflow-wrap: anywhere; }
+}
