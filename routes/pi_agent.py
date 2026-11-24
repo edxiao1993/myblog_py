@@ -388,8 +388,6 @@ def projects():
 @bp.post('/api/pi/sessions/<sid>/delete')
 @authorized
 def delete_session(sid):
-    if request.blueprint != 'coding_agent':
-        abort(404)
     agent = service()
     path = folder(sid)
     try:

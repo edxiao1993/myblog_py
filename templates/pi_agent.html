@@ -1,10 +1,16 @@
 {% extends 'base.html' %}
 {% block body_class %}pi-page{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/pi-mobile.css', v='20261106-reading') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pi-mobile.css', v='20261123-history-keyboard') }}">
 {% endblock %}
 {% block content %}
 <style>
+#pi-delete-dialog{width:min(380px,calc(100vw - 2rem));max-height:85vh;overflow:auto;padding:1.25rem;border:1px solid var(--app-border);border-radius:.75rem;background:var(--app-card-bg);color:var(--app-text)}#pi-delete-dialog::backdrop{background:rgba(0,0,0,.45)}#pi-delete-description{overflow-wrap:anywhere}
+.pi-history-row{position:relative}
+.pi-history-btn{padding-right:2rem!important}
+.pi-history-delete{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:24px;height:24px;min-height:24px!important;padding:0;font-size:1rem;line-height:1;display:inline-flex;align-items:center;justify-content:center;opacity:.6}
+.pi-history-row:hover .pi-history-delete,.pi-history-delete:focus-visible{opacity:1}
+
 /* Layout & Container */
 .pi-wrapper {
   max-width: 1200px;
@@ -377,6 +383,12 @@
                     </nav>
                 </div>
             </div>
+
+<dialog id="pi-delete-dialog" aria-labelledby="pi-delete-title" aria-describedby="pi-delete-description">
+<h2 id="pi-delete-title" class="h6">{{ _('Delete conversation?') }}</h2>
+<p id="pi-delete-description" class="small"></p>
+<div class="d-flex justify-content-end gap-2"><button id="pi-delete-cancel" type="button" class="btn btn-sm btn-outline-secondary" autofocus>{{ _('Cancel') }}</button><button id="pi-delete-confirm" type="button" class="btn btn-sm btn-danger">{{ _('Delete') }}</button></div>
+</dialog>
         </aside>
 
         <!-- Main Chat Column -->
@@ -554,8 +566,10 @@
     </div>
 </div>
 
+
+
 <script id="pi-presets" type="application/json">{{ presets|tojson }}</script>
 <script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/purify.min.js') }}"></script>
-<script src="{{ url_for('static', filename='js/pi-agent.js', v='20261106-reading') }}" defer></script>
+<script src="{{ url_for('static', filename='js/pi-agent.js', v='20261123-history-keyboard') }}" defer></script>
 {% endblock %}

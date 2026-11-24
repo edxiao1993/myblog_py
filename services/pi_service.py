@@ -59,6 +59,8 @@ class PiService:
         folder = self.user_root(user) / sid
         if not (folder / 'metadata.json').is_file():
             raise FileNotFoundError()
+        if self.metadata(folder).get('deleted'):
+            raise FileNotFoundError()
         return folder
 
     def prompts(self, user=None):
@@ -274,7 +276,8 @@ class PiService:
 
     def list(self, user):
         folder = self.user_root(user)
-        return sorted([json.loads(p.read_text()) for p in folder.glob('*/metadata.json')],
+        items = [json.loads(p.read_text()) for p in folder.glob('*/metadata.json')]
+        return sorted([item for item in items if not item.get('deleted')],
                       key=lambda item: item.get('updated', item['created']), reverse=True)
 
     def history(self, folder):
@@ -292,8 +295,24 @@ class PiService:
         except BlockingIOError:
             lock.close()
             raise BusyError('This conversation is already running.')
+        try:
+            if self.metadata(folder).get('deleted'):
+                raise FileNotFoundError()
+        except Exception:
+            lock.close()
+            raise
         (folder / 'stop').unlink(missing_ok=True)
         return lock
+
+    def delete(self, folder):
+        lock = self.acquire(folder)
+        try:
+            metadata = self.metadata(folder)
+            metadata['deleted'] = True
+            self.write_metadata(folder, metadata)
+            # Preserve transcripts and the tombstone used by native discovery.
+        finally:
+            lock.close()
 
     @contextmanager
     def inbox_lock(self, folder):

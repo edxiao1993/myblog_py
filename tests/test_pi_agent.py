@@ -622,13 +622,19 @@ for line in sys.stdin:
         self.login(2)
         self.assertEqual(self.client.get(f'/coding/api/pi/sessions/{sid}').status_code, 404)
 
+    def test_pi_delete_requires_csrf_ownership_and_idle_session(self):
+        sid = self.create()
+        self._check_delete('/api/pi', PiService(self.app.config), sid)
+
     def test_coding_delete_requires_csrf_ownership_and_idle_session(self):
         from services.coding_service import CodingService
         root = Path(self.temp.name).resolve()
         self.app.config['CODING_PROJECT_ROOT'] = str(root)
         sid = self.client.post('/coding/api/pi/sessions', json={'project': str(root)}, headers=self.headers).json['id']
-        url = f'/coding/api/pi/sessions/{sid}/delete'
-        agent = CodingService(self.app.config)
+        self._check_delete('/coding/api/pi', CodingService(self.app.config), sid)
+
+    def _check_delete(self, prefix, agent, sid):
+        url = f'{prefix}/sessions/{sid}/delete'
         path = agent.folder(User(1), sid)
         (path / 'session.jsonl').write_text('native transcript')
         (path / 'messages.jsonl').write_text('web transcript')
@@ -642,8 +648,11 @@ for line in sys.stdin:
         finally:
             lock.close()
         self.assertEqual(self.client.post(url, json={}, headers=self.headers).status_code, 200)
-        self.assertEqual(self.client.get('/coding/api/pi/sessions').json, [])
-        self.assertEqual(self.client.get(f'/coding/api/pi/sessions/{sid}/detail').status_code, 404)
+        from services.agent_service import AgentService, SessionNotFoundError
+        with self.assertRaises(SessionNotFoundError):
+            AgentService(self.app.config).get_session_detail(User(1), sid)
+        self.assertEqual(self.client.get(prefix + '/sessions').json, [])
+        self.assertEqual(self.client.get(f'{prefix}/sessions/{sid}/detail').status_code, 404)
         self.assertEqual((path / 'session.jsonl').read_text(), 'native transcript')
         self.assertEqual((path / 'messages.jsonl').read_text(), 'web transcript')
         with self.assertRaises(FileNotFoundError):

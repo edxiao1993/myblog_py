@@ -128,37 +128,6 @@ class CodingService(PiService):
                     # Ignore incomplete or incompatible sessions without hiding valid history.
                     continue
 
-    def folder(self, user, sid):
-        folder = super().folder(user, sid)
-        if self.metadata(folder).get('deleted'):
-            raise FileNotFoundError()
-        return folder
-
-    def list(self, user):
-        return [item for item in super().list(user) if not item.get('deleted')]
-
-    def acquire(self, folder):
-        lock = super().acquire(folder)
-        # A request may have resolved the folder just before deletion.
-        try:
-            if self.metadata(folder).get('deleted'):
-                raise FileNotFoundError()
-        except Exception:
-            lock.close()
-            raise
-        return lock
-
-    def delete(self, folder):
-        lock = self.acquire(folder)
-        try:
-            metadata = self.metadata(folder)
-            metadata['deleted'] = True
-            self.write_metadata(folder, metadata)
-            # Retain native/web transcripts and the metadata tombstone so native
-            # discovery cannot re-import a conversation removed from history.
-        finally:
-            lock.close()
-
     def rename(self, folder, name):
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 200:
             raise ValueError('Enter a session name of 1–200 characters.')

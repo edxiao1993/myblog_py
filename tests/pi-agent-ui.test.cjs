@@ -8,10 +8,14 @@ const vm = require('node:vm');
 class Element {
   constructor(tag = 'div') {
     this.tagName = tag; this.children = []; this.dataset = {}; this.textContent = '';
+    this.style = {removeProperty(name) { delete this[name]; }}; this.value = '';
     this.listeners = {}; this.scrollHeight = 0; this.clientHeight = 0; this._scrollTop = 0;
     const classes = new Set();
     this.classList = {add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c), toggle: (c, show) => show ? classes.add(c) : classes.delete(c)};
   }
+  focus() {}
+  showModal() { this.open = true; }
+  close(value) { this.returnValue = value; this.open = false; this.onclose?.(); }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   addEventListener(type, callback) { (this.listeners[type] ||= []).push(callback); }
@@ -21,22 +25,25 @@ class Element {
   get scrollTop() { return this._scrollTop; }
   set scrollTop(value) { this._scrollTop = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); }
 }
-function setup() {
+function setup(fetch) {
   const elements = new Map();
   const get = id => {
     if (!elements.has(id)) elements.set(id, new Element());
     return elements.get(id);
   };
   get('pi-presets').textContent = '{}';
-  const context = {window: new Element('window'), document: {getElementById: get, createElement: tag => new Element(tag), querySelectorAll: () => []},
+  const context = {fetch, FormData, URL, location:{href:'https://example.test/pi-agent'}, history:{replaceState(_state,_title,url){this.url=String(url);}}, window: new Element('window'), document: {body:new Element('body'), getElementById: get, createElement: tag => new Element(tag), querySelectorAll: () => []},
     marked: {setOptions() {}, parse: text => text}, DOMPurify: {addHook() {}, sanitize: text => text},
     localStorage: {setItem() {}}, console};
+  context.window.innerWidth = 1024; context.window.innerHeight = 800;
+  context.window.visualViewport = new Element('viewport');
+  Object.assign(context.window.visualViewport,{height:800,offsetTop:0,scale:1});
   vm.createContext(context);
   const source = readFileSync('static/js/pi-agent.js', 'utf8').replace('  initialize();',
-    '  window.testUI = {event, assistantDetails, resetMessages, setToolsVisibility, setBusy};');
+    '  window.testUI = {event, assistantDetails, resetMessages, setToolsVisibility, setBusy, refreshHistory, fitMobileViewport, deleteConversation, setCurrent: id => { sid = id; started = true; }, current: () => sid};');
   vm.runInContext(source, context);
   context.window.testUI.setToolsVisibility(false);
-  return {ui: context.window.testUI, get, window: context.window};
+  return {ui: context.window.testUI, get, window: context.window, document:context.document, history:context.history};
 }
 
 test('thinking streams, finalizes, restores, and stays collapsed across updates', () => {
@@ -211,4 +218,83 @@ test('native touch pointer cancellation does not release the reading pause', () 
   messages.scrollHeight = 1600;
   ui.event(delta('Latest'));
   assert.equal(messages.scrollTop, 1400);
+});
+
+test('mobile viewport keeps the page frame aligned above the keyboard and restores desktop sizing', () => {
+  const {ui,get,window,document} = setup();
+  window.innerWidth = 390;
+  ui.fitMobileViewport();
+  assert.equal(document.body.style.height,'800px');
+  window.visualViewport.height = 390; window.visualViewport.offsetTop = 170;
+  window.visualViewport.dispatch('resize');
+  assert.equal(get('pi-app').style.height,'390px');
+  assert.equal(document.body.style.height,'390px');
+  assert.equal(document.body.style.top,'170px');
+  window.visualViewport.offsetTop = 200; window.visualViewport.dispatch('scroll');
+  assert.equal(document.body.style.top,'200px');
+  window.visualViewport.height = 800; window.visualViewport.offsetTop = 0; window.visualViewport.dispatch('resize');
+  assert.equal(document.body.style.height,'800px');
+  assert.equal(document.body.style.top,'0px');
+  window.innerWidth = 1024; window.dispatch('resize');
+  assert.equal(get('pi-app').style.height,undefined);
+  assert.equal(document.body.style.height,undefined);
+  assert.equal(document.body.style.top,undefined);
+});
+
+test('history deletion confirms safely, supports cancellation, and resets the current conversation', async () => {
+  const posted = [];
+  const item = {id:'a'.repeat(32),title:'<img onerror=alert(1)>',created:1};
+  const {ui,get,history} = setup(async (url,options) => {
+    if(options.method === 'POST') posted.push(url);
+    return {ok:true,json:async () => options.method === 'POST' ? {ok:true} : [item]};
+  });
+  await ui.refreshHistory();
+  const row = get('pi-history').children[0];
+  assert.equal(row.children.length,2);
+  assert.equal(row.children[0].children[0].textContent,item.title);
+  assert.equal(row.children[1]['aria-label'],'Delete conversation: '+item.title);
+  let deletion = row.children[1].onclick();
+  assert.equal(get('pi-delete-dialog').open,true);
+  assert.ok(get('pi-delete-description').textContent.includes(item.title));
+  get('pi-delete-cancel').onclick(); await deletion;
+  assert.equal(posted.length,0);
+  ui.setCurrent(item.id);
+  deletion = row.children[1].onclick();
+  get('pi-delete-confirm').onclick(); await deletion;
+  assert.deepEqual(posted,['/api/pi/sessions/'+item.id+'/delete']);
+  assert.equal(ui.current(),'');
+  assert.equal(get('pi-messages').children.length,0);
+  assert.equal(get('pi-title').textContent,'New conversation');
+  assert.equal(get('pi-status').textContent,'Conversation deleted from history.');
+  assert.ok(!history.url.includes('conversation='));
+});
+
+test('failed or busy history deletion keeps the conversation available', async () => {
+  const item = {id:'a'.repeat(32),title:'Keep this chat',created:1};
+  const {ui,get} = setup(async (_url,options) => ({ok:options.method !== 'POST',status:409,
+    json:async () => options.method === 'POST' ? {error:'This conversation is already running.'} : [item]}));
+  await ui.refreshHistory(); ui.setCurrent(item.id);
+  ui.setBusy(true);
+  await get('pi-history').children[0].children[1].onclick();
+  assert.notEqual(get('pi-delete-dialog').open,true);
+  ui.setBusy(false);
+  const deletion = get('pi-history').children[0].children[1].onclick();
+  get('pi-delete-confirm').onclick(); await deletion;
+  assert.equal(ui.current(),item.id);
+  assert.equal(get('pi-history').children[0].children[0].children[0].textContent,item.title);
+  assert.equal(get('pi-status').textContent,'This conversation is already running.');
+});
+
+test('keyboard viewport changes preserve a paused reader and do not disable pinch zoom', () => {
+  const {ui,get,window,document} = setup();
+  const messages = get('pi-messages');
+  messages.clientHeight = 200; messages.scrollHeight = 1000;
+  ui.event(delta('Start')); messages.dispatch('wheel');
+  messages.scrollTop = 300; messages.dispatch('scroll');
+  window.innerWidth = 390; window.visualViewport.height = 400;
+  window.visualViewport.dispatch('resize');
+  assert.equal(messages.scrollTop,300);
+  window.visualViewport.scale = 2; window.visualViewport.height = 200;
+  window.visualViewport.dispatch('resize');
+  assert.equal(document.body.style.height,'400px');
 });

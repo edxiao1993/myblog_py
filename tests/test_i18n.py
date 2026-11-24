@@ -70,10 +70,12 @@ class LanguageTests(unittest.TestCase):
         }
         for language in ('en', 'zh-CN'):
             self.client.set_cookie('language', language)
-            body = self.client.get('/preview/coding_agent').get_data(as_text=True)
-            catalog = json.loads(body.split('<script id="i18n-data" type="application/json">')[1].split('</script>')[0])['messages']
-            for key, chinese in expected.items():
-                self.assertEqual(catalog.get(key, key), chinese if language == 'zh-CN' else key)
+            for page in ('coding_agent', 'pi_agent'):
+                body = self.client.get('/preview/' + page).get_data(as_text=True)
+                catalog = json.loads(body.split('<script id="i18n-data" type="application/json">')[1].split('</script>')[0])['messages']
+                for key, chinese in expected.items():
+                    self.assertEqual(catalog.get(key, key), chinese if language == 'zh-CN' else key)
+                self.assertIn('id="' + ('pi' if page == 'pi_agent' else 'coding') + '-delete-dialog"', body)
 
     def test_coding_page_languages_and_mobile_layout(self):
         for language, label in [('en', 'Project folder'), ('zh-CN', '项目文件夹')]:

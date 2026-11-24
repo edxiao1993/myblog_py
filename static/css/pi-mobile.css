@@ -40,6 +40,9 @@
 
 @media (max-width: 767.98px) {
   body.pi-page {
+    position: fixed;
+    inset: 0;
+    width: 100%;
     background: #fff;
     height: 100dvh;
     min-height: 0;
@@ -58,7 +61,7 @@
     padding: 0 !important;
   }
   .pi-page #pi-app {
-    height: 100dvh;
+    height: 100%;
     display: flex;
     flex-direction: column;
     padding: max(8px, env(safe-area-inset-top)) 14px max(12px, env(safe-area-inset-bottom));
@@ -220,6 +223,17 @@
   .pi-page #pi-sidebar-drawer { width: 320px; max-width: 88vw; }
   .pi-page #pi-sidebar-drawer > .card { overflow-y: auto; border-radius: 0; }
   .pi-page #pi-history { max-height: 48dvh; flex-shrink: 0; }
+  .pi-page .pi-history-btn { padding-right: 48px !important; }
+  .pi-page .pi-history-delete {
+    width: 44px;
+    height: 44px;
+    min-height: 44px !important;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 1.25rem;
+    opacity: 1;
+  }
   .pi-page .pi-mobile-navigation a {
     display: block;
     padding: 10px 6px;

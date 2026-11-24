@@ -151,6 +151,31 @@
       : t('Appended to Pi’s native instructions. Choose the preset before the first message. Pi also receives the conversation file paths.');
   }
 
+  function confirmDelete(title) {
+    const dialog = el('delete-dialog');
+    el('delete-description').textContent = t('Delete "{title}" from history? Pi transcript files will be preserved.', {title});
+    return new Promise(resolve => {
+      dialog.returnValue = '';
+      dialog.onclose = () => { dialog.onclose = null; resolve(dialog.returnValue === 'delete'); };
+      el('delete-cancel').onclick = () => dialog.close('cancel');
+      el('delete-confirm').onclick = () => dialog.close('delete');
+      dialog.showModal(); el('delete-cancel').focus();
+    });
+  }
+  async function deleteConversation(item) {
+    if (busy || el('delete-dialog').open) return;
+    if (!await confirmDelete(item.title) || busy) return;
+    setBusy(true);
+    try {
+      await api('/sessions/' + item.id + '/delete', {});
+      sessions = sessions.filter(session => session.id !== item.id);
+      if (sid === item.id) resetConversation(); else renderHistory();
+      status('Conversation deleted from history.');
+      el('new').focus();
+    } catch (error) { status(error.message); }
+    finally { setBusy(false); }
+  }
+
   function renderHistory() {
     const filter = el('search').value.toLowerCase();
     el('history').replaceChildren();
@@ -165,7 +190,8 @@
     visible.forEach(item => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'btn pi-history-btn text-start w-100 p-2 mb-1 d-flex flex-column border';
+      button.className = 'btn pi-history-btn text-start flex-grow-1 p-2 d-flex flex-column border';
+      button.style.minWidth = '0';
       button.setAttribute('aria-current', String(item.id === sid));
       button.disabled = busy;
 
@@ -186,7 +212,14 @@
         openConversation(item.id);
         closeMobileDrawer();
       };
-      el('history').append(button);
+      const remove = document.createElement('button'); remove.type = 'button';
+      remove.className = 'btn btn-sm btn-outline-danger pi-history-delete';
+      remove.disabled = busy; remove.title = t('Delete');
+      remove.setAttribute('aria-label', t('Delete conversation: {title}', {title: item.title}));
+      const icon = document.createElement('span'); icon.setAttribute('aria-hidden', 'true'); icon.textContent = '×'; remove.append(icon);
+      remove.onclick = () => deleteConversation(item);
+      const row = document.createElement('div'); row.className = 'pi-history-row position-relative d-flex mb-1';
+      row.append(button, remove); el('history').append(row);
     });
   }
 
@@ -644,16 +677,19 @@
     if (files.length + attachments.length > 20) { el('upload').value = ''; status('Attach up to 20 files.'); return; }
     chosenFiles = files; renderAttachments();
   };
-  el('new').onclick = async () => {
-    if (busy) return;
+  function resetConversation() {
     sid = ''; started = false; promptSnapshot = null; attachments = []; chosenFiles = [];
     resetMessages(); renderAttachments(); renderFiles([]); el('upload').value = ''; el('input').value = '';
     autoExpandInput();
     el('title').textContent = t('New conversation'); el('input').placeholder = t('Message Pi…');
-    el('prompt').value = 'general'; locationForConversation(); renderHistory(); promptPreview(); setBusy(true);
+    el('prompt').value = 'general'; locationForConversation(); renderHistory(); promptPreview();
     closeMobileDrawer();
+  }
+  el('new').onclick = async () => {
+    if (busy) return;
+    resetConversation(); setBusy(true);
     try { await loadOptions(); updateBadges(); status('Ready'); } catch (error) { status(error.message); }
-    finally { setBusy(false); el('input').focus(); }
+    finally { setBusy(false); el('input').focus({preventScroll: true}); }
   };
   el('archive').onclick = async () => {
     if (!sid || !started) { status('Send a message first.'); return; }
@@ -740,7 +776,7 @@
         await refreshHistory(); await refreshFiles();
         el('title').textContent = sessions.find(item => item.id === sid)?.title || t('New conversation');
       } catch (error) { status(error.message); }
-      setBusy(false); if (followOutput) el('input').focus();
+      setBusy(false); if (followOutput) el('input').focus({preventScroll: true});
     }
   };
 
@@ -803,14 +839,22 @@
 
   function fitMobileViewport() {
     if (window.innerWidth < 768) {
-      el('app').style.height = `${window.visualViewport?.height || window.innerHeight}px`;
+      const viewport = window.visualViewport;
+      if (viewport && viewport.scale > 1) return;
+      const height = `${viewport?.height || window.innerHeight}px`;
+      el('app').style.height = height;
+      document.body.style.height = height;
+      document.body.style.top = `${viewport?.offsetTop || 0}px`;
     } else {
       el('app').style.removeProperty('height');
+      document.body.style.removeProperty('height');
+      document.body.style.removeProperty('top');
     }
     followMessages();
   }
   window.addEventListener('resize', fitMobileViewport);
   window.visualViewport?.addEventListener('resize', fitMobileViewport);
+  window.visualViewport?.addEventListener('scroll', fitMobileViewport);
 
   async function initialize() {
     fitMobileViewport();
