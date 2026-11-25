@@ -8,9 +8,10 @@
   const tools = new Map();
   const thoughts = new Map();
   const runningTools = new Map();
-  let activity = '', followOutput = true, touchingMessages = false, touchGesture = false, lastScrollTop = 0, scrolledDown = false;
+  let activity = '', activityBase = '', activityKind = '', activityTool = '', activityStartTime = 0, activityTimer = null;
+  let followOutput = true, touchingMessages = false, touchGesture = false, lastScrollTop = 0, scrolledDown = false;
   let sid = '', busy = false, streaming = false, appending = false, started = false, assistant = null;
-  let sessions = [], attachments = [], chosenFiles = [], promptSnapshot = null;
+  let sessions = [], attachments = [], chosenFiles = [], promptSnapshot = null, knownOutputs = new Set();
   let optionModels = [], optionLevels = [];
 
   if (typeof marked !== 'undefined') {
@@ -115,30 +116,41 @@
     return `/api/pi/sessions/${sid}/files/${path.split('/').map(encodeURIComponent).join('/')}`;
   }
 
-  function fileLink(path) {
-    const link = document.createElement('a');
+  function triggerFileDownload(path, link = null, targetSid = sid) {
+    const activeSid = targetSid || sid;
+    if (!activeSid) return Promise.resolve();
     const filename = shortName(path.split('/').pop());
-    link.href = fileURL(path); link.textContent = filename; link.setAttribute('download', filename);
-    link.onclick = async event => {
-      event.preventDefault();
-      if (link.getAttribute('aria-busy') === 'true') return;
-      link.setAttribute('aria-busy', 'true');
-      status(t('Downloading {filename}…', {filename}));
-      try {
-        const response = await api(`/sessions/${sid}/files/${path.split('/').map(encodeURIComponent).join('/')}`);
-        const blob = await response.blob();
+    if (link?.getAttribute('aria-busy') === 'true') return Promise.resolve();
+    if (link) link.setAttribute('aria-busy', 'true');
+    status(t('Downloading {filename}…', {filename}));
+    return api(`/sessions/${activeSid}/files/${path.split('/').map(encodeURIComponent).join('/')}`)
+      .then(response => response.blob())
+      .then(blob => {
         const url = URL.createObjectURL(blob);
         const save = document.createElement('a');
         save.href = url; save.download = filename;
         document.body.append(save); save.click(); save.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        const revokeTimer = setTimeout(() => URL.revokeObjectURL(url), 60000);
+        if (revokeTimer?.unref) revokeTimer.unref();
         status(t('Download ready: {filename}', {filename}));
-      } catch (error) {
+      })
+      .catch(error => {
         const hint = error instanceof TypeError ? t(" Check that the server's HTTPS certificate is trusted by your browser.") : '';
         status(t('Download failed: {error}{hint}', {error: t(error.message), hint}));
-      } finally {
-        link.removeAttribute('aria-busy');
-      }
+      })
+      .finally(() => {
+        if (link) link.removeAttribute('aria-busy');
+      });
+  }
+
+  function fileLink(path) {
+    const link = document.createElement('a');
+    const filename = shortName(path.split('/').pop());
+    link.href = fileURL(path); link.textContent = filename; link.setAttribute('download', filename);
+    link.setAttribute('data-path', path);
+    link.onclick = async event => {
+      event.preventDefault();
+      await triggerFileDownload(path, link);
     };
     return link;
   }
@@ -234,15 +246,86 @@
     history.replaceState(null, '', url);
   }
 
+  function formatActivityText(base, kind, tool, elapsed) {
+    if (elapsed < 5) return base;
+    if (kind === 'thinking') {
+      if (elapsed >= 30) {
+        return t('Still thinking, working through complex steps… ({seconds}s)', {seconds: elapsed});
+      }
+      if (elapsed >= 15) {
+        return t('Thinking deeply, analyzing the problem… ({seconds}s)', {seconds: elapsed});
+      }
+      return t('{action} ({seconds}s)', {action: base, seconds: elapsed});
+    }
+    if (kind === 'tool') {
+      const toolName = tool || t('command');
+      if (elapsed >= 30) {
+        return t('Tool {tool} is still running, waiting for results… ({seconds}s)', {tool: toolName, seconds: elapsed});
+      }
+      if (elapsed >= 15) {
+        return t('Still executing {tool}… ({seconds}s)', {tool: toolName, seconds: elapsed});
+      }
+      return t('{action} ({seconds}s)', {action: base, seconds: elapsed});
+    }
+    if (kind === 'connecting') {
+      if (elapsed >= 8) {
+        return t('Connecting to Pi, waiting for response… ({seconds}s)', {seconds: elapsed});
+      }
+      return t('{action} ({seconds}s)', {action: base, seconds: elapsed});
+    }
+    if (elapsed >= 15) {
+      return t('Still working on your request… ({seconds}s)', {seconds: elapsed});
+    }
+    return t('{action} ({seconds}s)', {action: base, seconds: elapsed});
+  }
+
+  function updateActivityDisplay(overrideElapsed = null) {
+    if (!activityBase) return;
+    const elapsed = overrideElapsed !== null ? overrideElapsed : Math.max(0, Math.floor((Date.now() - activityStartTime) / 1000));
+    activity = formatActivityText(activityBase, activityKind, activityTool, elapsed);
+    refreshActivityTip();
+  }
+
+  function setActivity(text, kind = '', toolName = '') {
+    if (!text) {
+      if (activityTimer) { clearInterval(activityTimer); activityTimer = null; }
+      activity = '';
+      activityBase = '';
+      activityKind = '';
+      activityTool = '';
+      activityStartTime = 0;
+      refreshActivityTip();
+      return;
+    }
+    if (!kind) {
+      if (toolName) kind = 'tool';
+      else if (text.includes('Thinking') || text.includes('思考')) kind = 'thinking';
+      else if (text.includes('Running') || text.includes('运行') || text.includes('执行')) kind = 'tool';
+      else if (text.includes('Connecting') || text.includes('连接')) kind = 'connecting';
+      else if (text.includes('Preparing') || text.includes('准备')) kind = 'preparing';
+      else kind = 'working';
+    }
+    const isSameActivity = activityBase === text && activityKind === kind && (toolName ? activityTool === toolName : true);
+    activityBase = text;
+    activityKind = kind;
+    if (toolName) activityTool = toolName;
+    if (!isSameActivity || !activityStartTime) {
+      activityStartTime = Date.now();
+    }
+    const elapsed = Math.max(0, Math.floor((Date.now() - activityStartTime) / 1000));
+    activity = formatActivityText(activityBase, activityKind, activityTool, elapsed);
+    refreshActivityTip();
+
+    if (!activityTimer && typeof setInterval === 'function') {
+      activityTimer = setInterval(updateActivityDisplay, 1000);
+      if (activityTimer?.unref) activityTimer.unref();
+    }
+  }
+
   function refreshActivityTip() {
     if (el('activity-text').textContent !== activity) el('activity-text').textContent = activity;
     el('activity-tip').hidden = !activity || !el('app').classList.contains('hide-tools');
     followMessages();
-  }
-
-  function setActivity(text) {
-    activity = text;
-    refreshActivityTip();
   }
 
   const nearBottom = () => el('messages').scrollHeight - el('messages').clientHeight - el('messages').scrollTop <= 24;
@@ -323,6 +406,7 @@
     tools.clear();
     thoughts.clear();
     runningTools.clear();
+    knownOutputs.clear();
     setActivity('');
     followOutput = true; touchingMessages = false; touchGesture = false; lastScrollTop = 0;
     el('messages').replaceChildren();
@@ -333,6 +417,35 @@
   function render(body, text) {
     body.dataset.text = text;
     body.innerHTML = DOMPurify.sanitize(marked.parse(text));
+
+    body.querySelectorAll('a').forEach(link => {
+      const href = link.getAttribute('href') || link.href || '';
+      let fileSid = sid;
+      let cleanPath = '';
+      const apiMatch = href.match(/^\/api\/pi\/sessions\/([^/]+)\/files\/(.+)$/);
+      if (apiMatch) {
+        fileSid = apiMatch[1];
+        const rawPath = apiMatch[2].split(/[?#]/)[0];
+        try { cleanPath = decodeURIComponent(rawPath); } catch { cleanPath = rawPath; }
+      } else {
+        const normalized = href.replace(/^\.\//, '').split(/[?#]/)[0];
+        if (normalized.startsWith('outputs/') || normalized.startsWith('uploads/')) {
+          try { cleanPath = decodeURIComponent(normalized); } catch { cleanPath = normalized; }
+        }
+      }
+      if (cleanPath && fileSid) {
+        const targetPath = cleanPath;
+        const targetSid = fileSid;
+        const filename = shortName(targetPath.split('/').pop());
+        link.setAttribute('download', filename);
+        link.setAttribute('data-path', targetPath);
+        link.classList.add('pi-file-download-link');
+        link.onclick = async event => {
+          event.preventDefault();
+          await triggerFileDownload(targetPath, link, targetSid);
+        };
+      }
+    });
 
     body.querySelectorAll('pre').forEach(pre => {
       if (pre.querySelector('.copy-code-btn')) return;
@@ -370,6 +483,36 @@
     followMessages();
   }
 
+  function attachFilesToBubble(body, paths, isUser = false) {
+    if (!body || !paths || !paths.length) return;
+    const wrap = body._bubbleWrap || body.closest?.('.pi-bubble-wrap');
+    if (!wrap) return;
+    let attachBox = wrap.querySelector?.('.pi-msg-attachments') || (wrap.children || []).find?.(c => c.classList?.contains?.('pi-msg-attachments'));
+    if (!attachBox) {
+      attachBox = document.createElement('div');
+      attachBox.className = `pi-msg-attachments d-flex flex-wrap gap-1 mt-2 ${isUser ? 'justify-content-end' : 'justify-content-start'}`;
+      wrap.append(attachBox);
+    }
+    paths.forEach(path => {
+      const filename = shortName(path.split('/').pop());
+      const existingLinks = Array.from(attachBox.querySelectorAll?.('a') || attachBox.children || []);
+      const existing = existingLinks.some(
+        a => (a.getAttribute?.('data-path') || a['data-path']) === path
+      );
+      if (existing) return;
+      const isOutput = path.startsWith('outputs/');
+      const pill = document.createElement('span');
+      pill.className = `badge ${isOutput ? 'bg-success-subtle text-success border border-success-subtle' : 'bg-light text-primary border'} d-inline-flex align-items-center gap-1 py-1 px-2`;
+      pill.textContent = isOutput ? '📥 ' : '📎 ';
+      const link = fileLink(path);
+      if (isOutput) {
+        link.title = t('Download {filename}', {filename});
+      }
+      pill.append(link);
+      attachBox.append(pill);
+    });
+  }
+
   function bubble(role, text, attached = []) {
     const isUser = role === 'You';
     const section = document.createElement('section');
@@ -391,20 +534,12 @@
 
     const body = document.createElement('div');
     body.className = 'pi-msg-body markdown-body';
+    body._bubbleWrap = wrap;
     bubbleCard.append(body);
     wrap.append(meta, bubbleCard);
 
     if (attached && attached.length) {
-      const attachBox = document.createElement('div');
-      attachBox.className = `pi-msg-attachments d-flex flex-wrap gap-1 mt-2 ${isUser ? 'justify-content-end' : 'justify-content-start'}`;
-      attached.forEach(path => {
-        const pill = document.createElement('span');
-        pill.className = 'badge bg-light text-primary border d-inline-flex align-items-center gap-1 py-1 px-2';
-        pill.textContent = '📎 ';
-        pill.append(fileLink(path));
-        attachBox.append(pill);
-      });
-      wrap.append(attachBox);
+      attachFilesToBubble(body, attached, isUser);
     }
 
     section.append(wrap);
@@ -546,8 +681,16 @@
     });
   }
 
-  async function refreshFiles() {
-    if (sid) renderFiles(await (await api(`/sessions/${sid}/files`)).json());
+  async function refreshFiles(targetAssistant = null) {
+    if (!sid) return;
+    const files = await (await api(`/sessions/${sid}/files`)).json();
+    renderFiles(files);
+    const newOutputs = files.filter(f => f.path.startsWith('outputs/') && !knownOutputs.has(f.path)).map(f => f.path);
+    if (newOutputs.length) {
+      newOutputs.forEach(p => knownOutputs.add(p));
+      const target = targetAssistant || Array.from(el('messages').querySelectorAll?.('.pi-assistant-bubble .pi-msg-body') || []).pop();
+      if (target) attachFilesToBubble(target, newOutputs, false);
+    }
   }
 
   async function loadOptions(model = '', thinking = '') {
@@ -584,11 +727,27 @@
       if (!Array.from(el('thinking').options).some(option => option.value === settings.thinking)) el('thinking').add(new Option(settings.thinking, settings.thinking));
       el('thinking').value = settings.thinking;
       el('prompt').value = settings.prompt; promptSnapshot = detail.session.prompt_text; promptPreview();
+      knownOutputs = new Set(detail.files.filter(f => f.path.startsWith('outputs/')).map(f => f.path));
       for (const message of detail.messages) {
         if (message.role === 'toolResult') tool(message.toolCallId, message.toolName, content(message));
         else if (['user', 'assistant'].includes(message.role)) {
-          if (content(message)) bubble(message.role === 'user' ? 'You' : 'Assistant', content(message), message.attachments);
+          if (content(message) || (message.role === 'assistant' && message.attachments?.length)) {
+            bubble(message.role === 'user' ? 'You' : 'Assistant', content(message) || '', message.attachments);
+          }
           if (message.role === 'assistant') { thoughts.clear(); assistantDetails(message); }
+        }
+      }
+      const assistantBodies = Array.from(el('messages').querySelectorAll?.('.pi-assistant-bubble .pi-msg-body') || []);
+      if (assistantBodies.length) {
+        const lastBody = assistantBodies[assistantBodies.length - 1];
+        const attachedPaths = new Set(
+          Array.from(el('messages').querySelectorAll?.('.pi-msg-attachments a') || [])
+            .map(a => a.getAttribute?.('data-path') || a['data-path'])
+            .filter(Boolean)
+        );
+        const unattachedOutputs = Array.from(knownOutputs).filter(p => !attachedPaths.has(p));
+        if (unattachedOutputs.length) {
+          attachFilesToBubble(lastBody, unattachedOutputs, false);
         }
       }
       renderFiles(detail.files); locationForConversation(); renderHistory();
@@ -618,19 +777,31 @@
     if (record.type === 'message_end' && record.message.role === 'assistant') {
       assistantDetails(record.message);
       const text = content(record.message);
-      if (text) { setActivity(''); assistant ||= bubble('Assistant', ''); render(assistant, text); }
+      if (text || record.message.attachments?.length) {
+        setActivity('');
+        assistant ||= bubble('Assistant', '');
+        if (text) render(assistant, text);
+      }
+      if (record.message.attachments?.length && assistant) {
+        attachFilesToBubble(assistant, record.message.attachments, false);
+        record.message.attachments.forEach(p => {
+          if (p.startsWith('outputs/')) knownOutputs.add(p);
+        });
+      }
       if (record.message.errorMessage) { setActivity(''); throw new Error(record.message.errorMessage); }
       assistant = null;
     }
     if (record.type === 'tool_execution_start') {
       assistant = null; tool(record.toolCallId, record.toolName, JSON.stringify(record.args, null, 2));
-      runningTools.set(record.toolCallId, record.toolName || t('command'));
-      setActivity(t('Running {tool}…', {tool: runningTools.get(record.toolCallId)}));
+      const toolName = record.toolName || t('command');
+      runningTools.set(record.toolCallId, toolName);
+      setActivity(t('Running {tool}…', {tool: toolName}), 'tool', toolName);
     }
     if (['tool_execution_update', 'tool_execution_end'].includes(record.type)) {
       if (record.type === 'tool_execution_end') runningTools.delete(record.toolCallId);
       const toolName = runningTools.values().next().value;
-      setActivity(toolName ? t('Running {tool}…', {tool: toolName}) : t('Preparing a response…'));
+      if (toolName) setActivity(t('Running {tool}…', {tool: toolName}), 'tool', toolName);
+      else setActivity(t('Preparing a response…'), 'preparing');
       const result = record.result || record.partialResult;
       tool(record.toolCallId, record.toolName, `${record.isError ? t('Failed') + '\n' : ''}${content(result || {}) || JSON.stringify(result, null, 2)}`);
     }
@@ -738,6 +909,7 @@
     if (busy || (!text && !attachments.length && !chosenFiles.length)) return;
     const message = text || t('Please review the attached files.');
     setBusy(true); status('Connecting…'); assistant = null;
+    setActivity(t('Connecting to Pi…'), 'connecting');
     let reader;
     try {
       if (!sid) {

@@ -159,6 +159,25 @@ class LanguageTests(unittest.TestCase):
             self.assertIn(label, body)
             self.assertIn('pi-wrapper hide-tools pi-desktop-sidebar-hidden', body)
 
+    def test_pi_long_running_activity_messages_are_translated(self):
+        expected = {
+            '{action} ({seconds}s)': '{action}（{seconds}秒）',
+            'Connecting to Pi…': '正在连接 Pi…',
+            'Connecting to Pi, waiting for response… ({seconds}s)': '正在连接 Pi，等待响应…（{seconds}秒）',
+            'Thinking deeply, analyzing the problem… ({seconds}s)': '正在深入思考，分析问题中…（{seconds}秒）',
+            'Still thinking, working through complex steps… ({seconds}s)': '仍在深度思考，正在处理复杂步骤…（{seconds}秒）',
+            'Still executing {tool}… ({seconds}s)': '仍在执行 {tool}…（{seconds}秒）',
+            'Tool {tool} is still running, waiting for results… ({seconds}s)': '工具 {tool} 仍在运行中，等待返回结果…（{seconds}秒）',
+            'Still working on your request… ({seconds}s)': '仍在处理您的请求…（{seconds}秒）',
+            'Download {filename}': '下载 {filename}',
+        }
+        for language in ('en', 'zh-CN'):
+            self.client.set_cookie('language', language)
+            body = self.client.get('/preview/pi_agent').get_data(as_text=True)
+            catalog = json.loads(body.split('<script id="i18n-data" type="application/json">')[1].split('</script>')[0])['messages']
+            for key, chinese in expected.items():
+                self.assertEqual(catalog.get(key, key), chinese if language == 'zh-CN' else key)
+
     def test_pi_mobile_greeting_and_navigation_follow_browser_language(self):
         for language, greeting, placeholder, settings in [
                 ('en', 'What’s the plan for today?', 'Message Pi…', 'Settings'),

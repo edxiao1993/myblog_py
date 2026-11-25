@@ -10,18 +10,83 @@ class Element {
     this.tagName = tag; this.children = []; this.dataset = {}; this.textContent = '';
     this.style = {removeProperty(name) { delete this[name]; }}; this.value = '';
     this.listeners = {}; this.scrollHeight = 0; this.clientHeight = 0; this._scrollTop = 0;
+    this.parentElement = null;
     const classes = new Set();
-    this.classList = {add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c), toggle: (c, show) => show ? classes.add(c) : classes.delete(c)};
+    this.classList = {
+      add: (...cs) => cs.forEach(c => classes.add(c)),
+      remove: (...cs) => cs.forEach(c => classes.delete(c)),
+      contains: c => classes.has(c),
+      toggle: (c, show) => show ? classes.add(c) : classes.delete(c)
+    };
+    let _className = '';
+    this.options = [];
+    Object.defineProperty(this, 'className', {
+      get: () => _className,
+      set: val => {
+        _className = String(val || '');
+        classes.clear();
+        _className.split(/\s+/).filter(Boolean).forEach(c => classes.add(c));
+      }
+    });
   }
+  click() { this.onclick?.({preventDefault() {}}); }
+  add(opt) { this.options.push(opt); }
   focus() {}
   showModal() { this.open = true; }
   close(value) { this.returnValue = value; this.open = false; this.onclose?.(); }
-  append(...children) { this.children.push(...children); }
-  replaceChildren(...children) { this.children = children; }
+  append(...children) {
+    for (const child of children) {
+      if (child instanceof Element) child.parentElement = this;
+    }
+    this.children.push(...children);
+  }
+  replaceChildren(...children) {
+    for (const child of children) {
+      if (child instanceof Element) child.parentElement = this;
+    }
+    this.children = children;
+  }
+  remove() {
+    if (this.parentElement) {
+      this.parentElement.children = this.parentElement.children.filter(c => c !== this);
+    }
+  }
   addEventListener(type, callback) { (this.listeners[type] ||= []).push(callback); }
   dispatch(type, values = {}) { for (const fn of this.listeners[type] || []) fn(values); }
-  querySelectorAll() { return []; }
   setAttribute(name, value) { this[name] = value; }
+  getAttribute(name) { return this[name] !== undefined ? this[name] : null; }
+  removeAttribute(name) { delete this[name]; }
+  closest(selector) {
+    let cur = this;
+    const className = selector.startsWith('.') ? selector.slice(1) : selector;
+    while (cur) {
+      if (cur.classList?.contains(className) || cur.tagName?.toLowerCase() === selector.toLowerCase()) return cur;
+      cur = cur.parentElement;
+    }
+    return null;
+  }
+  querySelector(selector) {
+    const list = this.querySelectorAll(selector);
+    return list.length ? list[0] : null;
+  }
+  querySelectorAll(selector = '*') {
+    const results = [];
+    const match = el => {
+      if (!selector || selector === '*') return true;
+      if (selector.startsWith('.')) return el.classList?.contains(selector.slice(1));
+      return el.tagName?.toLowerCase() === selector.toLowerCase();
+    };
+    const walk = node => {
+      for (const child of node.children || []) {
+        if (child instanceof Element) {
+          if (match(child)) results.push(child);
+          walk(child);
+        }
+      }
+    };
+    walk(this);
+    return results;
+  }
   get scrollTop() { return this._scrollTop; }
   set scrollTop(value) { this._scrollTop = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); }
 }
@@ -32,7 +97,11 @@ function setup(fetch) {
     return elements.get(id);
   };
   get('pi-presets').textContent = '{}';
-  const context = {fetch, FormData, URL, location:{href:'https://example.test/pi-agent'}, history:{replaceState(_state,_title,url){this.url=String(url);}}, window: new Element('window'), document: {body:new Element('body'), getElementById: get, createElement: tag => new Element(tag), querySelectorAll: () => []},
+  class MockURL extends URL {
+    static createObjectURL() { return 'blob:mock'; }
+    static revokeObjectURL() {}
+  }
+  const context = {Date, fetch, FormData, URL: MockURL, Option: class { constructor(text, val) { this.text = text; this.value = val; } }, setTimeout, clearTimeout, setInterval, clearInterval, location:{href:'https://example.test/pi-agent'}, history:{replaceState(_state,_title,url){this.url=String(url);}}, window: new Element('window'), document: {body:new Element('body'), getElementById: get, createElement: tag => new Element(tag), querySelectorAll: () => []},
     marked: {setOptions() {}, parse: text => text}, DOMPurify: {addHook() {}, sanitize: text => text},
     localStorage: {setItem() {}}, console};
   context.window.innerWidth = 1024; context.window.innerHeight = 800;
@@ -40,7 +109,7 @@ function setup(fetch) {
   Object.assign(context.window.visualViewport,{height:800,offsetTop:0,scale:1});
   vm.createContext(context);
   const source = readFileSync('static/js/pi-agent.js', 'utf8').replace('  initialize();',
-    '  window.testUI = {event, assistantDetails, resetMessages, setToolsVisibility, setBusy, refreshHistory, fitMobileViewport, deleteConversation, setCurrent: id => { sid = id; started = true; }, current: () => sid};');
+    '  window.testUI = {event, assistantDetails, resetMessages, setToolsVisibility, setBusy, updateActivityDisplay, refreshHistory, fitMobileViewport, deleteConversation, bubble, render, openConversation, refreshFiles, setCurrent: id => { sid = id; started = true; }, current: () => sid};');
   vm.runInContext(source, context);
   context.window.testUI.setToolsVisibility(false);
   return {ui: context.window.testUI, get, window: context.window, document:context.document, history:context.history};
@@ -297,4 +366,270 @@ test('keyboard viewport changes preserve a paused reader and do not disable pinc
   window.visualViewport.scale = 2; window.visualViewport.height = 200;
   window.visualViewport.dispatch('resize');
   assert.equal(document.body.style.height,'400px');
+});
+
+test('long-running activity tip updates text with elapsed time and progressive hints', () => {
+  const {ui, get} = setup();
+  const tip = get('pi-activity-tip'), label = get('pi-activity-text');
+
+  // 1. Thinking progression
+  ui.event({type: 'message_update', assistantMessageEvent: {type: 'thinking_start'}});
+  assert.equal(tip.hidden, false);
+  assert.equal(label.textContent, 'Thinking…');
+  ui.updateActivityDisplay(6);
+  assert.equal(label.textContent, 'Thinking… (6s)');
+  ui.updateActivityDisplay(18);
+  assert.equal(label.textContent, 'Thinking deeply, analyzing the problem… (18s)');
+  ui.updateActivityDisplay(35);
+  assert.equal(label.textContent, 'Still thinking, working through complex steps… (35s)');
+
+  // 2. Tool progression
+  ui.event({type: 'tool_execution_start', toolCallId: 't1', toolName: 'web_search', args: {}});
+  assert.equal(label.textContent, 'Running web_search…');
+  ui.updateActivityDisplay(7);
+  assert.equal(label.textContent, 'Running web_search… (7s)');
+  ui.updateActivityDisplay(16);
+  assert.equal(label.textContent, 'Still executing web_search… (16s)');
+  ui.updateActivityDisplay(32);
+  assert.equal(label.textContent, 'Tool web_search is still running, waiting for results… (32s)');
+
+  // 3. Clear on completion
+  ui.event({type: 'tool_execution_end', toolCallId: 't1', toolName: 'web_search', result: {}});
+  assert.equal(label.textContent, 'Preparing a response…');
+  ui.updateActivityDisplay(8);
+  assert.equal(label.textContent, 'Preparing a response… (8s)');
+  ui.event(delta('Final response text'));
+  assert.equal(tip.hidden, true);
+});
+
+test('repeated streaming events preserve elapsed activity start time across an advancing clock', () => {
+  let currentTime = 1000000;
+  const originalNow = Date.now;
+  Date.now = () => currentTime;
+  try {
+    const {ui, get} = setup();
+    const tip = get('pi-activity-tip'), label = get('pi-activity-text');
+
+    // Start thinking
+    ui.event({type: 'message_update', assistantMessageEvent: {type: 'thinking_start'}});
+    assert.equal(tip.hidden, false);
+    assert.equal(label.textContent, 'Thinking…');
+
+    // Repeated thinking deltas every 2 seconds
+    currentTime += 2000;
+    ui.event({type: 'message_update', assistantMessageEvent: {type: 'thinking_delta', contentIndex: 0, delta: 'a'}});
+    assert.equal(label.textContent, 'Thinking…');
+
+    currentTime += 4000; // total 6s
+    ui.event({type: 'message_update', assistantMessageEvent: {type: 'thinking_delta', contentIndex: 0, delta: 'b'}});
+    assert.equal(label.textContent, 'Thinking… (6s)');
+
+    currentTime += 10000; // total 16s
+    ui.event({type: 'message_update', assistantMessageEvent: {type: 'thinking_delta', contentIndex: 0, delta: 'c'}});
+    assert.equal(label.textContent, 'Thinking deeply, analyzing the problem… (16s)');
+
+    // Tool start resets timer for the new activity
+    currentTime += 2000;
+    ui.event({type: 'tool_execution_start', toolCallId: 't1', toolName: 'bash', args: {}});
+    assert.equal(label.textContent, 'Running bash…');
+
+    currentTime += 7000; // 7s of tool
+    ui.event({type: 'tool_execution_update', toolCallId: 't1', toolName: 'bash', partialResult: 'output'});
+    assert.equal(label.textContent, 'Running bash… (7s)');
+
+    // Clearing activity resets state
+    ui.event(delta('Answer arrived'));
+    assert.equal(tip.hidden, true);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test('assistant output deliverables render download pills in message bubble and trigger downloads', async () => {
+  let downloadedPath = null;
+  const mockFetch = async (url) => {
+    if (url.includes('/files/outputs/')) {
+      downloadedPath = url;
+      return {
+        ok: true,
+        blob: async () => ({size: 1234})
+      };
+    }
+    return {ok: true, json: async () => ({})};
+  };
+
+  const {ui, get} = setup(mockFetch);
+  ui.setCurrent('sess-123');
+
+  // Assistant stream with generated deliverable attached at message_end
+  ui.event(delta('I have created the requested file.'));
+  ui.event({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [{type: 'text', text: 'I have created the requested file.'}],
+      attachments: ['outputs/analysis.csv']
+    }
+  });
+
+  const messages = get('pi-messages');
+  const bubbleWrap = messages.querySelector('.pi-bubble-wrap');
+  assert.ok(bubbleWrap, 'Bubble wrap should exist');
+  const attachBox = bubbleWrap.querySelector('.pi-msg-attachments');
+  assert.ok(attachBox, 'Attachment box should exist in assistant bubble');
+  const pills = attachBox.querySelectorAll('.badge');
+  assert.equal(pills.length, 1);
+  assert.ok(pills[0].textContent.includes('📥'));
+
+  const link = pills[0].querySelector('a');
+  assert.ok(link, 'Link element should exist in pill');
+  assert.equal(link.textContent, 'analysis.csv');
+  assert.equal(link.getAttribute('data-path'), 'outputs/analysis.csv');
+
+  // Trigger download click
+  let defaultPrevented = false;
+  await link.onclick({preventDefault: () => { defaultPrevented = true; }});
+  assert.equal(defaultPrevented, true);
+  assert.ok(downloadedPath.includes('/files/outputs/analysis.csv'), 'Should fetch file from correct endpoint');
+  assert.equal(get('pi-status').textContent, 'Download ready: analysis.csv');
+});
+
+test('in-dialog markdown links to outputs are intercepted and trigger file downloads', async () => {
+  let downloadedPath = null;
+  const mockFetch = async (url) => {
+    if (url.includes('/files/outputs/')) {
+      downloadedPath = url;
+      return {
+        ok: true,
+        blob: async () => ({size: 5678})
+      };
+    }
+    return {ok: true, json: async () => ({})};
+  };
+
+  const {ui, get} = setup(mockFetch);
+  ui.setCurrent('sess-456');
+
+  const body = ui.bubble('Assistant', '');
+  // Simulate marked parse generating an anchor tag to outputs/chart.png
+  const anchor = new Element('a');
+  anchor.setAttribute('href', 'outputs/chart.png');
+  anchor.textContent = 'Download chart';
+  body.append(anchor);
+  body.querySelectorAll = (sel) => sel === 'a' ? [anchor] : [];
+
+  ui.render(body, '[Download chart](outputs/chart.png)');
+
+  assert.equal(anchor.getAttribute('download'), 'chart.png');
+  assert.equal(anchor.getAttribute('data-path'), 'outputs/chart.png');
+
+  let defaultPrevented = false;
+  await anchor.onclick({preventDefault: () => { defaultPrevented = true; }});
+  assert.equal(defaultPrevented, true);
+  assert.ok(downloadedPath.includes('/files/outputs/chart.png'));
+  assert.equal(get('pi-status').textContent, 'Download ready: chart.png');
+});
+
+test('opening conversation restores output attachments and adds download pills to bubble', async () => {
+  const detail = {
+    session: {title: 'Test Session', settings: {model: 'test-model', thinking: 'off', prompt: 'general'}, prompt_text: ''},
+    messages: [
+      {role: 'user', content: 'Create a spreadsheet'},
+      {role: 'assistant', content: 'Here is your spreadsheet', attachments: ['outputs/data.xlsx']}
+    ],
+    files: [{path: 'outputs/data.xlsx', size: 1024}]
+  };
+
+  const mockFetch = async (url) => {
+    if (url.includes('/detail')) return {ok: true, json: async () => detail};
+    if (url.includes('/options')) return {ok: true, json: async () => ({models: [], levels: []})};
+    if (url.includes('/files')) return {ok: true, json: async () => detail.files};
+    return {ok: true, json: async () => ({})};
+  };
+
+  const {ui, get} = setup(mockFetch);
+  await ui.openConversation('sess-restored');
+
+  const messages = get('pi-messages');
+  const pills = messages.querySelectorAll('.badge');
+  const outputPills = pills.filter(p => p.textContent.includes('📥'));
+  assert.equal(outputPills.length, 1);
+  const link = outputPills[0].querySelector('a');
+  assert.equal(link.textContent, 'data.xlsx');
+  assert.equal(link.getAttribute('data-path'), 'outputs/data.xlsx');
+});
+
+test('deduplicates attachments by full path so same-named files across distinct paths both render', () => {
+  const {ui, get} = setup();
+  const body = ui.bubble('You', 'Uploaded files', [
+    'uploads/111111111111-report.csv',
+    'uploads/222222222222-report.csv'
+  ]);
+  const messages = get('pi-messages');
+  const attachBox = messages.querySelector('.pi-msg-attachments');
+  assert.ok(attachBox);
+  const links = attachBox.querySelectorAll('a');
+  assert.equal(links.length, 2);
+  assert.equal(links[0].getAttribute('data-path'), 'uploads/111111111111-report.csv');
+  assert.equal(links[1].getAttribute('data-path'), 'uploads/222222222222-report.csv');
+});
+
+test('url-encoded relative markdown links are decoded before download path construction', async () => {
+  let downloadedPath = null;
+  const mockFetch = async url => {
+    downloadedPath = url;
+    return {ok: true, blob: async () => ({size: 100})};
+  };
+  const {ui} = setup(mockFetch);
+  ui.setCurrent('sess-encode');
+
+  const body = ui.bubble('Assistant', '');
+  const anchor = new Element('a');
+  anchor.setAttribute('href', 'outputs/report%20final.csv');
+  anchor.textContent = 'download';
+  body.append(anchor);
+  body.querySelectorAll = sel => sel === 'a' ? [anchor] : [];
+
+  ui.render(body, '[download](outputs/report%20final.csv)');
+  assert.equal(anchor.getAttribute('data-path'), 'outputs/report final.csv');
+  await anchor.onclick({preventDefault() {}});
+  assert.equal(downloadedPath, '/api/pi/sessions/sess-encode/files/outputs/report%20final.csv');
+});
+
+test('handles malformed uri, query/fragment suffixes, and preserved session id in api links', async () => {
+  let downloadedPath = null;
+  const mockFetch = async url => {
+    downloadedPath = url;
+    return {ok: true, blob: async () => ({size: 100})};
+  };
+  const {ui} = setup(mockFetch);
+  ui.setCurrent('sess-curr');
+
+  // 1. Malformed percent escape should not throw and fall back cleanly
+  const body1 = ui.bubble('Assistant', '');
+  const a1 = new Element('a');
+  a1.setAttribute('href', 'outputs/progress100%.csv');
+  body1.querySelectorAll = sel => sel === 'a' ? [a1] : [];
+  assert.doesNotThrow(() => ui.render(body1, '[progress](outputs/progress100%.csv)'));
+  assert.equal(a1.getAttribute('data-path'), 'outputs/progress100%.csv');
+
+  // 2. Fragment and query stripping from path
+  const body2 = ui.bubble('Assistant', '');
+  const a2 = new Element('a');
+  a2.setAttribute('href', 'outputs/report.pdf#page=2');
+  body2.querySelectorAll = sel => sel === 'a' ? [a2] : [];
+  ui.render(body2, '[pdf](outputs/report.pdf#page=2)');
+  assert.equal(a2.getAttribute('data-path'), 'outputs/report.pdf');
+  await a2.onclick({preventDefault() {}});
+  assert.equal(downloadedPath, '/api/pi/sessions/sess-curr/files/outputs/report.pdf');
+
+  // 3. API link to another session preserves that session's id
+  const body3 = ui.bubble('Assistant', '');
+  const a3 = new Element('a');
+  a3.setAttribute('href', '/api/pi/sessions/other-sess/files/outputs/doc.txt');
+  body3.querySelectorAll = sel => sel === 'a' ? [a3] : [];
+  ui.render(body3, '[doc](/api/pi/sessions/other-sess/files/outputs/doc.txt)');
+  assert.equal(a3.getAttribute('data-path'), 'outputs/doc.txt');
+  await a3.onclick({preventDefault() {}});
+  assert.equal(downloadedPath, '/api/pi/sessions/other-sess/files/outputs/doc.txt');
 });

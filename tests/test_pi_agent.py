@@ -50,12 +50,20 @@ for line in sys.stdin:
         print(json.dumps({'type': 'response', 'id': 'prompt', 'success': False, 'error': 'HTTP 502 private-provider-body'}), flush=True)
         continue
     if cmd.get('message') == 'wait': continue
+    if cmd.get('message', '').startswith('generate-output'):
+        session_idx = sys.argv.index('--session')
+        folder_name = Path(sys.argv[session_idx + 1]).parent.name
+        out_dir = Path('conversations') / folder_name / 'outputs'
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / 'result.txt').write_text('generated file content')
     def emit(event): print(json.dumps(event), flush=True)
     if cmd.get('streamingBehavior') == 'steer':
         emit({'type': 'agent_settled'})  # Completion already in flight when append arrives.
     emit({'type': 'response', 'id': cmd['id'], 'success': True})
     emit({'type': 'tool_execution_start', 'toolCallId': 't', 'toolName': 'read', 'args': {'path': 'demo.txt'}})
     emit({'type': 'tool_execution_end', 'toolCallId': 't', 'toolName': 'read', 'result': {'content': [{'type':'text','text':'hello'}]}})
+    if cmd.get('message', '').startswith('generate-output'):
+        emit({'type': 'message_end', 'message': {'role': 'toolResult', 'toolCallId': 't', 'toolName': 'write', 'content': 'done'}})
     emit({'type': 'message_end', 'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'hello'}]}})
     emit({'type': 'agent_end'})
     emit({'type': 'agent_settled'})
@@ -146,6 +154,20 @@ for line in sys.stdin:
         agent = PiService(self.app.config)
         lock = agent.acquire(agent.folder(User(1), sid))
         lock.close()
+
+    def test_run_attaches_newly_generated_outputs_to_assistant_message(self):
+        sid = self.create()
+        agent = PiService(self.app.config)
+        folder = agent.folder(User(1), sid)
+        events = list(agent.run(folder, 'generate-output', agent.acquire(folder)))
+        assistant_end = next(e for e in events if e.get('type') == 'message_end' and e.get('message', {}).get('role') == 'assistant')
+        self.assertIn('outputs/result.txt', assistant_end['message'].get('attachments', []))
+        history = agent.history(folder)
+        tool_msg = next(m for m in history if m['role'] == 'toolResult')
+        self.assertNotIn('attachments', tool_msg)
+        assistant_msg = history[-1]
+        self.assertEqual(assistant_msg['role'], 'assistant')
+        self.assertIn('outputs/result.txt', assistant_msg.get('attachments', []))
 
     def test_stop_timeout_and_disconnect_release_lock(self):
         sid = self.create()
