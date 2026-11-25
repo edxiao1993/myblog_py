@@ -1,6 +1,7 @@
 {
   "Thinking…": "正在思考…",
   "Agent is working…": "助手正在处理…",
+  "Send a message below to start working with Pi.": "在下方发送消息，即可开始与 Pi 协作。",
   "Running a tool…": "正在运行工具…",
   "Preparing a response…": "正在准备回复…",
   "{action} ({seconds}s)": "{action}（{seconds}秒）",

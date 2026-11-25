@@ -27,6 +27,31 @@ function setup(fetch, storedProject = null) {
   vm.runInContext(readFileSync('static/js/coding-agent.js','utf8').replace("  initialize().catch(report);", '  window.test = {tool, render, newTurn, browse, updateMarkdown, send, thinking, initialize, activityEvent, setBusy};'),context);
   return {observers, stored, copied, clipboard, ui:context.window.test, window:context.window, get, messages:get('coding-messages')};
 }
+test('new-session tip appears when ready, hides immediately on send, and returns for a new chat', async () => {
+  let rejectSession;
+  const {ui, get, messages} = setup(async url => {
+    if (url.endsWith('/sessions')) return new Promise((_resolve, reject) => { rejectSession = reject; });
+    const data = url.includes('/projects') ? {path:'/project', parent:'/', folders:[]}
+      : url.includes('/options') ? {models:[], levels:[], commands:[]} : [];
+    return {ok:true, json:async () => data};
+  });
+  const tip = get('coding-session-tip');
+  assert.equal(tip.hidden, true);
+  await ui.browse('/project');
+  assert.equal(tip.hidden, false);
+  const pending = ui.send('hello');
+  assert.equal(tip.hidden, true);
+  assert.equal(messages.children.length, 0); // Hidden before session creation completes.
+  rejectSession(new Error('Unavailable'));
+  await assert.rejects(pending, /Unavailable/);
+  assert.equal(tip.hidden, false);
+  ui.render({role:'user', content:'hello'});
+  ui.setBusy(false);
+  assert.equal(tip.hidden, true);
+  get('coding-new').onclick();
+  assert.equal(tip.hidden, false);
+});
+
 test('input label shows agent activity and resets after completion or failure', () => {
   const {ui, get} = setup();
   ui.activityEvent({type:'message_update', assistantMessageEvent:{type:'thinking_start',contentIndex:0}});

@@ -178,6 +178,17 @@ class LanguageTests(unittest.TestCase):
             for key, chinese in expected.items():
                 self.assertEqual(catalog.get(key, key), chinese if language == 'zh-CN' else key)
 
+    def test_coding_agent_session_tip_is_translated(self):
+        for language, tip in [
+                ('en', 'Send a message below to start working with Pi.'),
+                ('zh-CN', '在下方发送消息，即可开始与 Pi 协作。')]:
+            self.client.set_cookie('language', language)
+            body = self.client.get('/preview/coding_agent').get_data(as_text=True)
+            self.assertIn(tip, body)
+            self.assertIn('id="coding-session-tip"', body)
+            self.assertIn('role="status" hidden', body)
+            self.assertIn('#coding-session-tip[hidden]{display:none}', body)
+
     def test_pi_mobile_greeting_and_navigation_follow_browser_language(self):
         for language, greeting, placeholder, settings in [
                 ('en', 'What’s the plan for today?', 'Message Pi…', 'Settings'),

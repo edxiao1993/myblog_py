@@ -2,7 +2,7 @@
   const el = id => document.getElementById('coding-' + id);
   const t = (s, values) => window.AppI18n.t(s, values);
   let directory = '', project = '', sid = '', busy = false, running = false, appending = false, calls = new Map(), group = null, summary = null;
-  let thinkingBlocks = new Map(), activeCalls = new Set();
+  let thinkingBlocks = new Map(), activeCalls = new Set(), ready = false;
   const projectKey = 'coding-agent-project-' + (el('app').dataset.userId || 'default');
   marked.setOptions({gfm: true, breaks: true});
   const settings = () => ({model: el('model').value, thinking: el('thinking').value, prompt: 'pi'});
@@ -17,6 +17,9 @@
     el('activity').textContent = message ? t(message) : '';
     el('activity-spinner').hidden = !message;
   }
+  function updateSessionTip() {
+    el('session-tip').hidden = busy || !ready || !project || el('messages').children.length > 0;
+  }
   function setBusy(value) {
     busy = value;
     if (!value) setActivity();
@@ -25,6 +28,7 @@
     el('message').disabled = value && !running;
     el('send').disabled = (value && !running) || appending;
     el('stop').disabled = !running;
+    updateSessionTip();
   }
   function copyButton(parent, text) {
     const button = document.createElement('button'); button.type = 'button';
@@ -301,6 +305,7 @@
     data.levels.forEach(level => el('thinking').add(new Option(t(level), level))); el('thinking').value = thinking;
     el('command').replaceChildren(new Option(t('Choose command'), ''), new Option('/reload', 'reload'), new Option('/compact', 'compact'));
     data.commands.forEach(c => el('command').add(new Option('/' + c.name + (c.description ? ' — ' + c.description : ''), c.name)));
+    ready = true;
   }
   async function loadDirectory(path, name) {
     const data = await (await api('/projects' + (name === undefined ? '?path=' + encodeURIComponent(path) : ''), name === undefined ? undefined : {path, name})).json();
@@ -315,7 +320,7 @@
     if (directory === project) { await history(); return; }
     setBusy(true);
     try {
-      project = directory; sid = '';
+      project = directory; sid = ''; ready = false;
       try { localStorage.setItem(projectKey, project); } catch (_) { /* Storage can be unavailable. */ }
       el('project-name').textContent = project; el('project-name').title = project;
       el('messages').replaceChildren(); newTurn();
@@ -385,6 +390,7 @@
   el('browse').onclick = run(() => loadDirectory(el('path').value));
   el('create').onclick = run(() => loadDirectory(directory, el('folder-name').value));
   function updateJump() {
+    updateSessionTip();
     const messages = el('messages');
     el('jump-latest').hidden = messages.scrollHeight - messages.clientHeight - messages.scrollTop <= 4;
   }
@@ -397,7 +403,7 @@
   new MutationObserver(updateJump).observe(el('messages'), {childList: true, subtree: true, characterData: true, attributes: true});
   new ResizeObserver(updateJump).observe(el('messages'));
   updateJump();
-  el('new').onclick = () => { sid = ''; updateActiveSession(); setSidebar(false); newTurn(); el('messages').replaceChildren(); el('message').focus(); };
+  el('new').onclick = () => { sid = ''; updateActiveSession(); setSidebar(false); newTurn(); el('messages').replaceChildren(); updateSessionTip(); el('message').focus(); };
   el('model').onchange = run(async () => { setBusy(true); try { await options(el('model').value, el('thinking').value); } finally { setBusy(false); } });
   el('form').onsubmit = run(async event => { event.preventDefault(); if (el('message').value.trim()) await send(el('message').value.trim()); });
   el('message').onkeydown = event => {

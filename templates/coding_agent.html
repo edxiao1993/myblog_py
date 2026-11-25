@@ -7,6 +7,7 @@
 @media(prefers-reduced-motion:reduce){ #coding-activity-spinner{animation:none}}
 .coding-history-row{position:relative}.coding-history-btn.coding-history-title{padding-right:2rem}.coding-history-delete{position:absolute;right:2px;top:2px;width:26px;height:26px;min-height:26px!important;padding:0;font-size:1rem;line-height:1}
 #coding-delete-dialog{width:min(380px,calc(100vw - 2rem));max-height:85vh;overflow:auto;padding:1.25rem;border:1px solid var(--app-border);border-radius:.75rem;background:var(--app-card-bg);color:var(--app-text)}#coding-delete-dialog::backdrop{background:rgba(0,0,0,.45)}#coding-delete-description{overflow-wrap:anywhere}
+#coding-session-tip{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;margin:0;pointer-events:none;overflow-wrap:anywhere}#coding-session-tip[hidden]{display:none}
 .coding-conversation{position:relative}#coding-jump-latest{position:absolute;right:.75rem;bottom:.75rem;width:24px;height:24px;min-height:24px;padding:0;font-size:.75rem;border-radius:50%;background:#dbeafe;color:#1e3a8a;border:1px solid #93c5fd}#coding-jump-latest[hidden]{display:none}
 #coding-messages .coding-copy{display:block;margin-left:auto;min-height:18px;padding:1px 4px;font-size:.65rem;line-height:1.2}
 .coding-sidebar-project{background:rgba(0,0,0,.03);border:1px solid rgba(0,0,0,.08);border-radius:.5rem;padding:.5rem .625rem}
@@ -44,6 +45,7 @@ html[data-theme="dark"] .coding-history-btn[aria-current="true"]{background:#1e3
 </div>
 <div class="coding-conversation mb-2">
 <div id="coding-messages" class="card p-3" role="log" aria-label="{{ _('Conversation') }}"></div>
+<p id="coding-session-tip" class="text-muted text-center p-3" role="status" hidden>{{ _('Send a message below to start working with Pi.') }}</p>
 <button id="coding-jump-latest" type="button" class="btn" aria-label="{{ _('Jump to latest') }}" title="{{ _('Jump to latest') }}" aria-controls="coding-messages" hidden><span aria-hidden="true">↓</span></button>
 </div>
 <p id="coding-status" role="status"></p>
@@ -65,5 +67,5 @@ html[data-theme="dark"] .coding-history-btn[aria-current="true"]{background:#1e3
 </dialog></div>
 <script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/purify.min.js') }}"></script>
-<script src="{{ url_for('static', filename='js/coding-agent.js', v='20261118-mobile') }}" defer></script>
+<script src="{{ url_for('static', filename='js/coding-agent.js', v='20261125-session-tip') }}" defer></script>
 {% endblock %}
