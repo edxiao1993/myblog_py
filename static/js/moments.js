@@ -3,6 +3,12 @@ document.querySelectorAll('[data-moment-toggle]').forEach(button => {
   const full = content.querySelector('[data-moment-full]');
   let expanded = false;
 
+  // Read escaped text from the DOM; never insert raw user Markdown as HTML.
+  if (window.marked && window.DOMPurify) {
+    full.innerHTML = window.DOMPurify.sanitize(window.marked.parse(full.textContent, {gfm: true, breaks: true}), {USE_PROFILES: {html: true}});
+    full.style.whiteSpace = 'normal';
+  }
+
   const update = () => {
     const limit = parseFloat(window.getComputedStyle(full).lineHeight) * 5;
     const overflowing = full.scrollHeight > limit + 0.5;
@@ -18,6 +24,8 @@ document.querySelectorAll('[data-moment-toggle]').forEach(button => {
     update();
   });
   update();
+  full.addEventListener('load', update, true); // Images can change the rendered height.
+  full.addEventListener('error', update, true);
   window.addEventListener('resize', update);
   if (window.ResizeObserver) {
     let width = full.getBoundingClientRect().width;

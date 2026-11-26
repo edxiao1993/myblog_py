@@ -281,6 +281,9 @@ class LanguageTests(unittest.TestCase):
                     self.assertIn('white-space: pre-wrap;', body)
                     self.assertIn('word-break: break-word;', body)
                     self.assertIn('js/moments.js', body)
+                    self.assertIn('class="moment-markdown"', body)
+                    self.assertLess(body.index('js/marked.min.js'), body.index('js/moments.js'))
+                    self.assertLess(body.index('js/purify.min.js'), body.index('js/moments.js'))
                     self.assertIn('data-moment-toggle', body)
                     self.assertIn('aria-expanded="false"', body)
                     self.assertIn('aria-controls="moment-content-test" hidden', body)
@@ -288,6 +291,19 @@ class LanguageTests(unittest.TestCase):
                     self.assertNotIn('data-moment-preview', body)
                     self.assertNotIn('pre-wrap;" hidden', body)
                     self.assertEqual(body.count('word\n'), count - 1)
+                    date_markup = '<time datetime="2026-01-01T00:00:00">2026-01-01 00:00</time>'
+                    self.assertIn(date_markup, body)
+                    self.assertIn('<div class="d-flex flex-wrap align-items-center justify-content-end gap-2 mt-2">', body)
+                    self.assertLess(body.index('data-moment-content'), body.index(date_markup))
+                    self.assertLess(body.index(date_markup), body.index('data-bs-target="#deleteModaltest"'))
+                    self.assertIn('Posted on' if language == 'en' else '发布于', body)
+
+    def test_moment_markdown_help_is_translated(self):
+        for language, help_text in [('en', 'Markdown is supported.'), ('zh-CN', '支持 Markdown 格式。')]:
+            self.client.set_cookie('language', language)
+            body = self.client.get('/preview/add_moment').get_data(as_text=True)
+            self.assertIn(help_text, body)
+            self.assertIn('aria-describedby="moment-format-help"', body)
 
     def test_interface_language_does_not_translate_user_content(self):
         self.switch('zh-CN')
