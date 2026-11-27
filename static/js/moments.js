@@ -19,9 +19,46 @@ document.querySelectorAll('[data-moment-toggle]').forEach(button => {
     button.textContent = window.AppI18n.t(expanded && overflowing ? 'Show less' : 'Show more');
   };
 
-  button.addEventListener('click', () => {
+  const toggle = () => {
+    if (button.hidden) return;
     expanded = !expanded;
     update();
+  };
+  button.addEventListener('click', toggle);
+
+  const card = button.closest('[data-moment-card]');
+  const interactive = target => target.closest('a, button, input, textarea, select, label, summary, details, [contenteditable], [role="button"]');
+  let touchStart = null, previousTap = null, lastTouchToggle = -Infinity;
+  card.addEventListener('dblclick', event => {
+    // A touch double-tap may also generate a native dblclick. Toggle only once.
+    if (Date.now() - lastTouchToggle < 700 || interactive(event.target)) return;
+    toggle();
+  });
+  card.addEventListener('pointerdown', event => {
+    if (event.pointerType !== 'touch') return;
+    if (event.isPrimary === false || interactive(event.target)) {
+      touchStart = previousTap = null;
+      return;
+    }
+    touchStart = {id: event.pointerId, x: event.clientX, y: event.clientY, time: Date.now()};
+  });
+  card.addEventListener('pointercancel', () => { touchStart = previousTap = null; });
+  card.addEventListener('pointerup', event => {
+    if (event.pointerType !== 'touch') return;
+    const start = touchStart, now = Date.now();
+    touchStart = null;
+    if (!start || event.pointerId !== start.id || interactive(event.target)
+        || now - start.time > 500 || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) {
+      previousTap = null;
+      return;
+    }
+    if (previousTap && now - previousTap.time < 350
+        && Math.hypot(event.clientX - previousTap.x, event.clientY - previousTap.y) < 24) {
+      previousTap = null;
+      lastTouchToggle = now;
+      toggle();
+      if (!button.hidden) event.preventDefault();
+    } else previousTap = {time: now, x: event.clientX, y: event.clientY};
   });
   update();
   full.addEventListener('load', update, true); // Images can change the rendered height.

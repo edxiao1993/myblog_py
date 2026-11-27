@@ -6,20 +6,24 @@ const vm = require('node:vm');
 function setup(language, markdown = false) {
   const catalog = JSON.parse(readFileSync('translations/zh-CN.json', 'utf8'));
   const resize = [], observers = [], sanitized = [];
+  let clock = 1000;
   const source = '# Heading\n\n**bold** and [link](https://example.com)\n\n```js\nconst x = 1;\n```\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n<script>alert(1)</script><img src=x onerror=alert(1)>[bad](javascript:alert(1))';
   const cards = [20, 100, 120, 220].map(height => {
     const full = {scrollHeight: height, style: {}, width: 600, textContent: source, listeners: {},
       addEventListener(event, callback) { this.listeners[event] = callback; },
       getBoundingClientRect() { return {width: this.width}; }};
     const attributes = {'aria-expanded': 'false'};
-    return {full, button: {
-      closest: () => ({querySelector: () => full}),
+    const listeners = {};
+    const card = {addEventListener(event, callback) { listeners[event] = callback; }};
+    return {full, listeners, button: {
+      closest: selector => selector === '[data-moment-card]' ? card : {querySelector: () => full},
       getAttribute: key => attributes[key],
       setAttribute: (key, value) => { attributes[key] = value; },
       addEventListener(event, callback) { this.click = callback; }
     }};
   });
   vm.runInNewContext(readFileSync('static/js/moments.js', 'utf8'), {
+    Date: {now: () => clock},
     document: {querySelectorAll: () => cards.map(card => card.button)},
     window: {
       ...(markdown ? {marked: require('../static/js/marked.min.js'), DOMPurify: {sanitize(html, options) {
@@ -34,7 +38,7 @@ function setup(language, markdown = false) {
       }
     }
   });
-  return {cards, sanitized, resize: () => resize.forEach(callback => callback()), observers};
+  return {cards, sanitized, tick: (ms = 100) => { clock += ms; }, resize: () => resize.forEach(callback => callback()), observers};
 }
 
 test('Markdown is parsed before sanitization and only sanitizer output reaches the DOM', () => {
@@ -83,6 +87,53 @@ for (const language of ['en', 'zh-CN']) {
     assert.equal(card.button.textContent, language === 'en' ? 'Show more' : '展开全文');
   });
 }
+
+test('double-click toggles long cards independently and ignores interactive targets and short cards', () => {
+  const {cards} = setup('en');
+  const event = {target: {closest: () => null}};
+  cards[2].listeners.dblclick(event);
+  assert.equal(cards[2].button.getAttribute('aria-expanded'), 'true');
+  assert.equal(cards[3].button.getAttribute('aria-expanded'), 'false');
+  cards[2].listeners.dblclick({target: {closest: () => ({})}}); // link/delete/button
+  assert.equal(cards[2].button.getAttribute('aria-expanded'), 'true');
+  cards[2].listeners.dblclick(event);
+  assert.equal(cards[2].full.style.maxHeight, '100px');
+  cards[0].listeners.dblclick(event);
+  assert.equal(cards[0].button.getAttribute('aria-expanded'), 'false');
+});
+
+test('touch double-tap toggles once, ignores synthetic dblclick, scrolling, and cancelled gestures', () => {
+  const {cards, tick} = setup('zh-CN');
+  const card = cards[2];
+  let prevented = 0;
+  const event = {pointerType:'touch', pointerId:1, clientX:30, clientY:30,
+    target:{closest:() => null}, preventDefault:() => { prevented++; }};
+  const tap = () => { card.listeners.pointerdown(event); tick(50); card.listeners.pointerup(event); };
+  tap();
+  assert.equal(card.button.getAttribute('aria-expanded'), 'false');
+  tick(50); tap();
+  assert.equal(card.button.getAttribute('aria-expanded'), 'true');
+  assert.equal(card.button.textContent, '收起全文');
+  assert.equal(prevented, 1);
+  card.listeners.dblclick(event);
+  assert.equal(card.button.getAttribute('aria-expanded'), 'true');
+  tick(800); tap(); tick(50); tap();
+  assert.equal(card.button.getAttribute('aria-expanded'), 'false');
+  tick(800); tap();
+  card.listeners.pointerdown(event);
+  card.listeners.pointerup({...event, clientY:100});
+  tap();
+  assert.equal(card.button.getAttribute('aria-expanded'), 'false');
+  card.listeners.pointercancel();
+  tap();
+  assert.equal(card.button.getAttribute('aria-expanded'), 'false');
+  tick(800);
+  const interactive = {...event, target:{closest:() => ({})}};
+  for (let i=0; i<2; i++) {
+    card.listeners.pointerdown(interactive); tick(50); card.listeners.pointerup(interactive);
+  }
+  assert.equal(card.button.getAttribute('aria-expanded'), 'false');
+});
 
 test('remeasures wrapped lines after mobile resize and card width changes', () => {
   const ui = setup('en');

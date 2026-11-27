@@ -27,7 +27,7 @@
     {% if moments %}
         <div class="d-flex flex-column gap-3">
             {% for moment in moments %}
-                <div class="card shadow-xs rounded-3 border bg-white p-3 p-md-4 hover-lift">
+                <div class="card shadow-xs rounded-3 border bg-white p-3 p-md-4 hover-lift" data-moment-card>
                     <div class="text-secondary my-2" data-moment-content style="font-size: 1.05rem; line-height: 1.7; word-break: break-word;">
                         <div id="moment-content-{{ moment.id }}" class="moment-markdown" data-moment-full style="white-space: pre-wrap;">{{ moment.moment }}</div>
                         <button type="button" class="btn btn-link px-0 py-2" data-moment-toggle aria-expanded="false" aria-controls="moment-content-{{ moment.id }}" hidden>{{ _('Show more') }}</button>
@@ -124,5 +124,5 @@
 </div>
 <script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/purify.min.js') }}"></script>
-<script src="{{ url_for('static', filename='js/moments.js', v='20261125-markdown') }}" defer></script>
+<script src="{{ url_for('static', filename='js/moments.js', v='20261125-double-click') }}" defer></script>
 {% endblock %}
