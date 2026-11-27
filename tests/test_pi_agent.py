@@ -27,6 +27,22 @@ class PiTests(unittest.TestCase):
 import json, sys
 from pathlib import Path
 Path('rpc-test-command.json').write_text(json.dumps(sys.argv))
+def exercise_extension_ui():
+    def emit_ui(method, **fields):
+        print(json.dumps({'type': 'extension_ui_request', 'id': method, 'method': method, **fields}), flush=True)
+    emit_ui('setStatus', statusKey='codeviewer', statusText='CodeViewer: reviewing…')
+    emit_ui('notify', message='<b>Review notification</b>', notifyType='info')
+    emit_ui('setWidget', widgetKey='review', widgetLines=['details'])
+    emit_ui('setTitle', title='Review')
+    emit_ui('set_editor_text', text='do not overwrite the web composer')
+    emit_ui('setStatus', statusKey='codeviewer')  # clear
+    responses = []
+    for method in ('select', 'confirm', 'input', 'editor'):
+        emit_ui(method, title='Test dialog')
+        response = json.loads(sys.stdin.readline())
+        responses.append(response)
+        assert response == {'type': 'extension_ui_response', 'id': method, 'cancelled': True}, response
+    Path('ui-responses.json').write_text(json.dumps(responses))
 for line in sys.stdin:
     cmd = json.loads(line)
     if cmd['type'] == 'abort':
@@ -40,6 +56,8 @@ for line in sys.stdin:
     }
     if cmd['type'] == 'set_session_name':
         Path('rename-rpc.json').write_text(json.dumps(cmd))
+    if cmd['type'] == 'get_available_models' and Path('test-options-ui').exists():
+        exercise_extension_ui()
     if cmd['type'] in replies:
         print(json.dumps({'id': cmd['id'], 'type': 'response', 'success': True, 'data': replies[cmd['type']]}), flush=True)
         continue
@@ -50,6 +68,7 @@ for line in sys.stdin:
         print(json.dumps({'type': 'response', 'id': 'prompt', 'success': False, 'error': 'HTTP 502 private-provider-body'}), flush=True)
         continue
     if cmd.get('message') == 'wait': continue
+    if cmd.get('message') == 'test-extension-ui': exercise_extension_ui()
     if cmd.get('message', '').startswith('generate-output'):
         session_idx = sys.argv.index('--session')
         folder_name = Path(sys.argv[session_idx + 1]).parent.name
@@ -97,6 +116,32 @@ for line in sys.stdin:
         response = self.client.post('/api/pi/sessions', json={}, headers=self.headers)
         self.assertEqual(response.status_code, 201)
         return response.json['id']
+
+    def test_extension_notifications_do_not_get_cancelled_as_dialogs(self):
+        sid = self.create()
+        with self.assertLogs('pi.agent', level='INFO') as logs:
+            response = self.client.post(f'/api/pi/sessions/{sid}/messages',
+                json={'message': 'test-extension-ui'}, headers=self.headers)
+            events = [json.loads(frame[6:]) for frame in response.data.decode().strip().split('\n\n')]
+        statuses = [event['message'] for event in events if event['type'] == 'status']
+        self.assertIn('CodeViewer: reviewing…', statuses)
+        self.assertIn('<b>Review notification</b>', statuses)
+        self.assertIn('', statuses)
+        self.assertEqual(statuses.count('An extension requested an interactive dialog; the dialog was cancelled.'), 4)
+        self.assertEqual('\n'.join(logs.output).count('extension.dialog_cancelled'), 4)
+        self.assertIn('done', [event['type'] for event in events])
+        self.assertNotIn('error', [event['type'] for event in events])
+        agent = PiService(self.app.config)
+        responses = json.loads((agent.workspace('kevin') / 'ui-responses.json').read_text())
+        self.assertEqual([reply['id'] for reply in responses], ['select', 'confirm', 'input', 'editor'])
+
+    def test_options_only_cancel_real_extension_dialogs(self):
+        agent = PiService(self.app.config)
+        (agent.workspace('kevin') / 'test-options-ui').touch()
+        response = self.client.get('/api/pi/options')
+        self.assertEqual(response.status_code, 200)
+        responses = json.loads((agent.workspace('kevin') / 'ui-responses.json').read_text())
+        self.assertEqual([reply['id'] for reply in responses], ['select', 'confirm', 'input', 'editor'])
 
     def test_agent_lifecycle_logs_metadata_without_chat_contents(self):
         sid = self.create()

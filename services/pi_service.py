@@ -17,6 +17,9 @@ from utils.agent_logging import agent_context, agent_event, describe_error
 from services.pi_memory import PiMemory
 
 
+EXTENSION_DIALOG_METHODS = frozenset({'select', 'confirm', 'input', 'editor'})
+
+
 class BusyError(Exception):
     pass
 
@@ -155,7 +158,7 @@ class PiService:
                 while b'\n' in pending:
                     line, pending = pending.split(b'\n', 1)
                     event = json.loads(line)
-                    if event.get('type') == 'extension_ui_request':
+                    if event.get('type') == 'extension_ui_request' and event.get('method') in EXTENSION_DIALOG_METHODS:
                         process.stdin.write((json.dumps({'type': 'extension_ui_response', 'id': event['id'], 'cancelled': True}) + '\n').encode())
                         process.stdin.flush()
                     if event.get('id') == command and event.get('type') == 'response':
@@ -532,8 +535,6 @@ class PiService:
                 if kind == 'message_end' and event.get('message', {}).get('errorMessage'):
                     outcome = 'provider_error'
                     log('response.failed', logging.ERROR, **describe_error(event['message']['errorMessage']))
-                if kind == 'extension_ui_request':
-                    log('extension.dialog_cancelled', logging.WARNING)
                 if kind == 'message_end' and event['message'].get('role') != 'user':
                     if outputs_dir and outputs_dir.is_dir() and event['message'].get('role') == 'assistant':
                         post_outputs = [p.relative_to(files_root).as_posix() for p in outputs_dir.rglob('*') if p.is_file()]
@@ -549,9 +550,22 @@ class PiService:
                         event['message']['id'] = 'msg-' + uuid.uuid4().hex
                     self.save(folder, event['message'])
                 if kind == 'extension_ui_request':
-                    # Noninteractive web client: cancel dialogs rather than block indefinitely.
-                    send({'type': 'extension_ui_response', 'id': event['id'], 'cancelled': True})
-                    yield {'type': 'status', 'message': 'An extension requested an interactive dialog; the dialog was cancelled.'}
+                    method = event.get('method')
+                    if method in EXTENSION_DIALOG_METHODS:
+                        # Only dialogs wait for a response; avoid blocking the web client.
+                        log('extension.dialog_cancelled', logging.WARNING)
+                        send({'type': 'extension_ui_response', 'id': event['id'], 'cancelled': True})
+                        yield {'type': 'status', 'message': 'An extension requested an interactive dialog; the dialog was cancelled.'}
+                    elif method in ('setStatus', 'notify'):
+                        # Both frontends already render status text safely. These UI
+                        # methods are fire-and-forget and must never be cancelled.
+                        text = event.get('statusText' if method == 'setStatus' else 'message', '')
+                        if text is None:
+                            text = ''
+                        if isinstance(text, str):
+                            yield {'type': 'status', 'message': text}
+                    # Other fire-and-forget methods (widgets/title/editor) aren't
+                    # supported by this client; ignore them without responding.
                     continue
                 yield event
                 if kind == 'response' and event.get('success') is False:

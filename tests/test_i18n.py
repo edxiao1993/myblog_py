@@ -60,6 +60,16 @@ class LanguageTests(unittest.TestCase):
                     if page == 'pi_agent':
                         self.assertIn('id="pi-mobile-theme"', body)
 
+    def test_posts_create_button_is_icon_only_with_translated_accessible_label(self):
+        for language, label in [('en', 'Create New Post'), ('zh-CN', '新建文章')]:
+            self.client.set_cookie('language', language)
+            body = self.client.get('/preview/index').get_data(as_text=True)
+            header = body.split('<!-- Simple Header Bar -->')[1].split('<!-- Posts Feed -->')[0]
+            self.assertIn('aria-label="' + label + '"', header)
+            self.assertIn('title="' + label + '"', header)
+            self.assertIn('<span aria-hidden="true">+</span>', header)
+            self.assertNotIn('<span>' + label + '</span>', header)
+
     def test_coding_delete_messages_are_translated(self):
         expected = {
             'Delete conversation?': '删除对话？',
