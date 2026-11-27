@@ -609,3 +609,66 @@ test('opening history highlights the active conversation and resets on new chat'
   assert.equal(btn1['aria-current'], 'false');
   assert.equal(btn2['aria-current'], 'false');
 });
+
+test('streaming pauses when user scrolls or opens a tool card, and resumes on send or jump to latest', async () => {
+  let controller;
+  const {ui, get, messages} = setup(async url => {
+    if (url.includes('/projects')) return {ok:true, json:async () => ({path:'/proj', folders:[]})};
+    if (url.includes('/options')) return {ok:true, json:async () => ({models:[], levels:[], commands:[]})};
+    if (url.endsWith('/sessions')) return {ok:true, json:async () => ({id:'sess-scroll'})};
+    if (url.endsWith('/messages')) {
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({
+        start(c) { controller = c; }
+      });
+      return {ok:true, body};
+    }
+    return {ok:true, json:async () => []};
+  });
+  await ui.browse('/proj');
+  messages.clientHeight = 200;
+  messages.scrollHeight = 1000;
+  messages.scrollTop = 100;
+  messages.onscroll();
+
+  const sendPromise = ui.send('hello');
+  // Yield until stream starts
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(messages.scrollTop, 1000);
+
+  // First streamed chunk follows to bottom
+  messages.scrollHeight = 1200;
+  controller.enqueue(new TextEncoder().encode('data: {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Part 1 "}}\n\n'));
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(messages.scrollTop, 1200);
+
+  // Programmatic tool start opens its card and triggers toggle -> should NOT pause following
+  controller.enqueue(new TextEncoder().encode('data: {"type":"tool_execution_start","toolCallId":"t1","toolName":"read","args":{}}\n\n'));
+  await new Promise(r => setTimeout(r, 0));
+  const autoCard = messages.children.at(-1).children[0];
+  assert.equal(autoCard.open, true);
+  messages.ontoggle({target: autoCard});
+  messages.scrollHeight = 1350;
+  controller.enqueue(new TextEncoder().encode('data: {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"more "}}\n\n'));
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(messages.scrollTop, 1350);
+
+  // User opens a tool card -> pauses following
+  messages.ontoggle({target: {open: true, dataset: {}}});
+  messages.scrollTop = 400;
+  messages.scrollHeight = 1600;
+  controller.enqueue(new TextEncoder().encode('data: {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Part 2"}}\n\n'));
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(messages.scrollTop, 400);
+
+  // Jump to latest resumes following
+  get('coding-jump-latest').onclick();
+  assert.equal(messages.scrollTop, 1600);
+  messages.scrollHeight = 1800;
+  controller.enqueue(new TextEncoder().encode('data: {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":" Part 3"}}\n\n'));
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(messages.scrollTop, 1800);
+
+  controller.close();
+  await sendPromise;
+});

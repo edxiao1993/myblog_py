@@ -633,3 +633,44 @@ test('handles malformed uri, query/fragment suffixes, and preserved session id i
   await a3.onclick({preventDefault() {}});
   assert.equal(downloadedPath, '/api/pi/sessions/other-sess/files/outputs/doc.txt');
 });
+
+test('expanding a tool card pauses streaming scroll, and sending a message jumps to bottom', async () => {
+  const {ui, get} = setup(async url => {
+    if (url.endsWith('/messages')) {
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(encoder.encode('data: {"type":"done"}\n\n'));
+          c.close();
+        }
+      });
+      return {ok: true, body};
+    }
+    return {ok: true, json: async () => []};
+  });
+  ui.setCurrent('sess-scroll');
+  const messages = get('pi-messages');
+  messages.clientHeight = 200;
+  messages.scrollHeight = 1000;
+
+  ui.event(delta('Streaming start '));
+  assert.equal(messages.scrollTop, 800);
+
+  // Opening a <details class="pi-tool-details"> tool card pauses auto-follow,
+  // while Markdown-rendered <details open> does not.
+  messages.dispatch('toggle', {target: {open: true}});
+  messages.scrollHeight = 1200;
+  ui.event(delta('still following '));
+  assert.equal(messages.scrollTop, 1000);
+
+  messages.dispatch('toggle', {target: {open: true, classList: {contains: c => c === 'pi-tool-details'}}});
+  messages.scrollHeight = 1400;
+  ui.event(delta('more text'));
+  assert.equal(messages.scrollTop, 1000);
+
+  // Sending a new message jumps back to bottom and resumes following
+  get('pi-input').value = 'New question';
+  messages.scrollHeight = 1600;
+  await get('pi-form').onsubmit({preventDefault() {}});
+  assert.equal(messages.scrollTop, 1400);
+});

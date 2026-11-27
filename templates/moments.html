@@ -17,10 +17,10 @@
             <h1 class="h4 fw-bold text-dark mb-0">{{ _('Secret Moments') }}</h1>
         </div>
         <div>
-            <a href="{{ url_for('moments.add_moment') }}" class="btn btn-primary btn-sm px-3 shadow-xs">
+            <button type="button" class="btn btn-primary btn-sm px-3 shadow-xs" data-bs-toggle="modal" data-bs-target="#addMomentModal">
                 <span>+</span>
                 <span>{{ _('Add Secret Moment') }}</span>
-            </a>
+            </button>
         </div>
     </div>
 
@@ -115,14 +115,37 @@
             <h2 class="h5 fw-bold text-dark mb-1">{{ _('No secret moments yet.') }}</h2>
             <p class="text-muted small mb-3">{{ _('Keep your thoughts and moments private. Only you can view and delete them.') }}</p>
             <div>
-                <a href="{{ url_for('moments.add_moment') }}" class="btn btn-primary btn-sm px-3 shadow-xs">
+                <button type="button" class="btn btn-primary btn-sm px-3 shadow-xs" data-bs-toggle="modal" data-bs-target="#addMomentModal">
                     {{ _('Share your first secret moment!') }}
-                </a>
+                </button>
             </div>
         </div>
     {% endif %}
 </div>
+
+<!-- Add Secret Moment Modal -->
+<div class="modal fade" id="addMomentModal" tabindex="-1" aria-labelledby="addMomentModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border shadow rounded-3">
+            <div class="modal-header border-bottom py-3 px-4">
+                <h2 class="modal-title h6 fw-bold text-dark mb-0" id="addMomentModalLabel">{{ _('Add a Secret Moment') }}</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{{ _('Cancel') }}"></button>
+            </div>
+            <form method="POST" action="{{ url_for('moments.add_moment') }}">
+                <div class="modal-body p-4">
+                    <label for="moment-modal-input" class="form-label fw-semibold text-secondary small">{{ _('Your Secret Moment') }}</label>
+                    <textarea class="form-control" id="moment-modal-input" name="moment" rows="6" aria-describedby="moment-modal-format-help" placeholder="{{ _('Share your secret thought or moment...') }}" required></textarea>
+                    <div id="moment-modal-format-help" class="form-text">{{ _('Markdown is supported.') }}</div>
+                </div>
+                <div class="modal-footer border-top py-2 px-4">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">{{ _('Cancel') }}</button>
+                    <button type="submit" class="btn btn-sm btn-primary px-3 shadow-xs">{{ _('Share Moment') }}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 <script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/purify.min.js') }}"></script>
-<script src="{{ url_for('static', filename='js/moments.js', v='20261125-double-click') }}" defer></script>
+<script src="{{ url_for('static', filename='js/moments.js', v='20261127-add-modal') }}" defer></script>
 {% endblock %}

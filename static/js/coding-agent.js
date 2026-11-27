@@ -3,6 +3,7 @@
   const t = (s, values) => window.AppI18n.t(s, values);
   let directory = '', project = '', sid = '', busy = false, running = false, appending = false, calls = new Map(), group = null, summary = null;
   let thinkingBlocks = new Map(), activeCalls = new Set(), ready = false;
+  let followOutput = true, touchingMessages = false, touchGesture = false, lastScrollTop = 0, scrolledDown = false;
   const projectKey = 'coding-agent-project-' + (el('app').dataset.userId || 'default');
   marked.setOptions({gfm: true, breaks: true});
   const settings = () => ({model: el('model').value, thinking: el('thinking').value, prompt: 'pi'});
@@ -83,22 +84,28 @@
     return body;
   }
   const content = message => typeof message.content === 'string' ? message.content : (message.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  function setCardOpen(card, open) {
+    if (!card) return;
+    if (open && !card.open) card.dataset.autoOpen = 'true';
+    else if (!open) delete card.dataset.autoOpen;
+    card.open = open;
+  }
   function refreshActivityGroup(force = false) {
     if (!group || (!force && calls.size <= 10 && !summary)) return;
     if (!summary) {
       const wrapper = document.createElement('details'); summary = document.createElement('summary');
       group.replaceWith(wrapper); wrapper.append(summary, group); collapsible(wrapper);
-      wrapper.open = activeCalls.size > 0;
+      setCardOpen(wrapper, activeCalls.size > 0);
       const groupedCalls = calls;
       copyButton(wrapper, () => Array.from(groupedCalls.values(), body => body.parentElement.children[0].textContent + '\n' + body.textContent).join('\n\n'));
     }
     summary.textContent = t('Tool calls ({count})', {count: calls.size});
   }
   function collapseActivity() {
-    for (const body of calls.values()) body.parentElement.open = false;
+    for (const body of calls.values()) setCardOpen(body.parentElement, false);
     activeCalls.clear();
     refreshActivityGroup(true);
-    if (summary) summary.parentElement.open = false;
+    if (summary) setCardOpen(summary.parentElement, false);
   }
   function tool(id, name, value, replace = false, active = false) {
     if (!group) { group = document.createElement('div'); el('messages').append(group); }
@@ -108,13 +115,13 @@
     else body.textContent = value;
     if (active) {
       activeCalls.add(id);
-      if (!wasActive) body.parentElement.open = true;
+      if (!wasActive) setCardOpen(body.parentElement, true);
     } else {
-      activeCalls.delete(id); body.parentElement.open = false;
+      activeCalls.delete(id); setCardOpen(body.parentElement, false);
     }
     refreshActivityGroup();
-    if (summary && active && !wasActive) summary.parentElement.open = true;
-    if (summary && !activeCalls.size && !active) summary.parentElement.open = false;
+    if (summary && active && !wasActive) setCardOpen(summary.parentElement, true);
+    if (summary && !activeCalls.size && !active) setCardOpen(summary.parentElement, false);
     return body;
   }
   function thinking(index, text, append = false, active = append) {
@@ -217,6 +224,7 @@
         try {
           const detail = await (await api('/sessions/' + item.id + '/detail')).json();
           sid = item.id; updateActiveSession(); setSidebar(false); el('messages').replaceChildren(); newTurn();
+          followOutput = true; touchingMessages = false; touchGesture = false; lastScrollTop = 0;
           const active = detail.active_run;
           const current = active ? detail.messages.findIndex(message => message.id === active.user_message_id) : -1;
           (current < 0 ? detail.messages : detail.messages.slice(0, current)).forEach(render);
@@ -352,7 +360,7 @@
           }
           if (event.type === 'error') throw new Error(t(event.message));
           if (event.type === 'status') el('status').textContent = t(event.message);
-          el('messages').scrollTop = el('messages').scrollHeight;
+          followMessages();
         }
       }
   }
@@ -363,7 +371,7 @@
       appending = true; setBusy(true);
       try {
         await api('/sessions/' + sid + '/append', {message});
-        messageCard('user', message);
+        messageCard('user', message); resumeFollowing();
         if (el('message').value.trim() === message) el('message').value = '';
         el('status').textContent = t('Message queued for Pi.');
       } finally { appending = false; setBusy(busy); }
@@ -375,7 +383,7 @@
         sid = (await (await api('/sessions', {...settings(), project})).json()).id;
         await history(); setBusy(true);
       }
-      newTurn(); messageCard('user', message);
+      newTurn(); messageCard('user', message); resumeFollowing();
       const response = await api('/sessions/' + sid + '/messages', {message, settings: settings()});
       running = true; setBusy(true);
       if (el('message').value.trim() === message) el('message').value = '';
@@ -389,21 +397,87 @@
   el('path').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); el('select').onclick(); } };
   el('browse').onclick = run(() => loadDirectory(el('path').value));
   el('create').onclick = run(() => loadDirectory(directory, el('folder-name').value));
+  const nearBottom = () => el('messages').scrollHeight - el('messages').clientHeight - el('messages').scrollTop <= 24;
   function updateJump() {
     updateSessionTip();
     const messages = el('messages');
     el('jump-latest').hidden = messages.scrollHeight - messages.clientHeight - messages.scrollTop <= 4;
   }
-  el('jump-latest').onclick = () => {
-    el('messages').scrollTop = el('messages').scrollHeight;
+  function followMessages() {
+    if (followOutput && !touchingMessages) {
+      el('messages').scrollTop = el('messages').scrollHeight;
+      lastScrollTop = el('messages').scrollTop;
+    }
+    updateJump();
+  }
+  function pauseFollowing() {
+    followOutput = false;
+    updateJump();
+  }
+  function resumeFollowing() {
+    followOutput = true;
+    touchingMessages = false;
+    touchGesture = false;
+    followMessages();
+  }
+  function startReading() {
+    if (touchingMessages) return;
+    touchingMessages = true;
+    scrolledDown = false;
+    lastScrollTop = el('messages').scrollTop;
+    pauseFollowing();
+  }
+  function finishReadingGesture() {
+    if (!touchingMessages) return;
+    touchingMessages = false;
+    if (scrolledDown && nearBottom()) followOutput = true;
+    updateJump();
+  }
+  el('messages').addEventListener('pointerdown', startReading, {passive: true});
+  el('messages').addEventListener('touchstart', () => {
+    touchGesture = true;
+    startReading();
+  }, {passive: true});
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    for (const type of ['pointerup', 'pointercancel']) {
+      window.addEventListener(type, () => { if (!touchGesture) finishReadingGesture(); }, {passive: true});
+    }
+    for (const type of ['touchend', 'touchcancel']) {
+      window.addEventListener(type, event => {
+        if (event.touches?.length) return;
+        touchGesture = false;
+        finishReadingGesture();
+      }, {passive: true});
+    }
+  }
+  el('messages').addEventListener('wheel', pauseFollowing, {passive: true});
+  el('messages').addEventListener('keydown', event => {
+    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) pauseFollowing();
+  });
+  el('messages').addEventListener('toggle', event => {
+    const target = event.target;
+    if (!target?.open || target.closest?.('.coding-markdown')) return;
+    if (target.dataset?.autoOpen === 'true') {
+      delete target.dataset.autoOpen;
+      return;
+    }
+    pauseFollowing();
+  }, true);
+  el('jump-latest').onclick = resumeFollowing;
+  el('messages').onscroll = () => {
+    const top = el('messages').scrollTop;
+    if (top !== lastScrollTop) {
+      if (touchingMessages) scrolledDown = top > lastScrollTop;
+      else followOutput = nearBottom() && (followOutput || top > lastScrollTop);
+    }
+    lastScrollTop = top;
     updateJump();
   };
-  el('messages').onscroll = updateJump;
   el('messages').addEventListener('load', updateJump, true);
   new MutationObserver(updateJump).observe(el('messages'), {childList: true, subtree: true, characterData: true, attributes: true});
   new ResizeObserver(updateJump).observe(el('messages'));
   updateJump();
-  el('new').onclick = () => { sid = ''; updateActiveSession(); setSidebar(false); newTurn(); el('messages').replaceChildren(); updateSessionTip(); el('message').focus(); };
+  el('new').onclick = () => { sid = ''; updateActiveSession(); setSidebar(false); newTurn(); followOutput = true; touchingMessages = false; touchGesture = false; lastScrollTop = 0; el('messages').replaceChildren(); updateSessionTip(); el('message').focus(); };
   el('model').onchange = run(async () => { setBusy(true); try { await options(el('model').value, el('thinking').value); } finally { setBusy(false); } });
   el('form').onsubmit = run(async event => { event.preventDefault(); if (el('message').value.trim()) await send(el('message').value.trim()); });
   el('message').onkeydown = event => {

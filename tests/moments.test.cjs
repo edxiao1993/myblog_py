@@ -158,3 +158,35 @@ test('remeasures wrapped lines after mobile resize and card width changes', () =
   assert.equal(card.button.hidden, false);
   assert.equal(card.full.style.maxHeight, '');
 });
+
+test('add moment modal focuses textarea when shown and submits on Cmd/Ctrl+Enter', () => {
+  let focused = 0, submitted = 0;
+  const listeners = {modal: {}, input: {}};
+  const modal = {addEventListener: (e, fn) => { listeners.modal[e] = fn; }};
+  const input = {
+    focus: () => { focused += 1; },
+    form: {requestSubmit: () => { submitted += 1; }},
+    addEventListener: (e, fn) => { listeners.input[e] = fn; }
+  };
+  vm.runInNewContext(readFileSync('static/js/moments.js', 'utf8'), {
+    document: {
+      querySelectorAll: () => [],
+      getElementById: id => id === 'addMomentModal' ? modal : id === 'moment-modal-input' ? input : null
+    },
+    window: {AppI18n: {t: s => s}, addEventListener: () => {}}
+  });
+  listeners.modal['shown.bs.modal']();
+  assert.equal(focused, 1);
+
+  let prevented = false;
+  listeners.input.keydown({key: 'Enter', metaKey: false, ctrlKey: false, preventDefault: () => { prevented = true; }});
+  assert.equal(submitted, 0);
+  assert.equal(prevented, false);
+
+  listeners.input.keydown({key: 'Enter', metaKey: true, isComposing: true, preventDefault: () => { prevented = true; }});
+  assert.equal(submitted, 0);
+
+  listeners.input.keydown({key: 'Enter', ctrlKey: true, isComposing: false, preventDefault: () => { prevented = true; }});
+  assert.equal(prevented, true);
+  assert.equal(submitted, 1);
+});
