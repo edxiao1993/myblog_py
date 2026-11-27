@@ -77,3 +77,14 @@ document.querySelectorAll('[data-moment-toggle]').forEach(button => {
   }
   if (document.fonts) document.fonts.ready.then(update);
 });
+const addModal = document.getElementById?.('addMomentModal');
+const modalInput = document.getElementById?.('moment-modal-input');
+if (addModal && modalInput) {
+  addModal.addEventListener('shown.bs.modal', () => modalInput.focus());
+  modalInput.addEventListener('keydown', event => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !event.isComposing) {
+      event.preventDefault();
+      modalInput.form?.requestSubmit();
+    }
+  });
+}

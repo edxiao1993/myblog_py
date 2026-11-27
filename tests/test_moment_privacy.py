@@ -108,6 +108,13 @@ class MomentPrivacyTests(unittest.TestCase):
         self.assertEqual(self.client.delete('/api/moments/2-0', headers=self.headers(2)).status_code, 200)
         self.assertIsNone(db.session.get(SecretMoment, '2-0'))
 
+    def test_moments_page_renders_add_moment_modal(self):
+        body = self.client.get('/moments/').get_data(as_text=True)
+        self.assertIn('data-bs-target="#addMomentModal"', body)
+        self.assertIn('id="addMomentModal"', body)
+        self.assertIn('action="/moments/add_moment"', body)
+        self.assertIn('name="moment"', body)
+
     def test_login_and_token_required(self):
         with self.client.session_transaction() as session:
             session.clear()

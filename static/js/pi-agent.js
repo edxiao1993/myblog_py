@@ -381,6 +381,9 @@
   el('messages').addEventListener('keydown', event => {
     if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) pauseFollowing();
   });
+  el('messages').addEventListener('toggle', event => {
+    if (event.target?.open && event.target.classList?.contains('pi-tool-details')) pauseFollowing();
+  }, true);
   el('messages').addEventListener('scroll', () => {
     const top = el('messages').scrollTop;
     if (top !== lastScrollTop) {
@@ -390,11 +393,12 @@
     lastScrollTop = top;
     updateJumpButton();
   }, {passive: true});
-  el('jump-latest').onclick = () => {
+  function resumeFollowing() {
     followOutput = true;
     touchingMessages = false; touchGesture = false;
     followMessages();
-  };
+  }
+  el('jump-latest').onclick = resumeFollowing;
 
   function updateEmptyState() {
     const empty = el('empty-state');
@@ -899,6 +903,7 @@
       appending = true; el('send').disabled = true;
       try {
         await api(`/sessions/${sid}/append`, {message: text});
+        resumeFollowing();
         bubble('You', text);
         if (el('input').value.trim() === text) { el('input').value = ''; autoExpandInput(); }
         status('Message queued for Pi.');
@@ -908,6 +913,7 @@
     }
     if (busy || (!text && !attachments.length && !chosenFiles.length)) return;
     const message = text || t('Please review the attached files.');
+    resumeFollowing();
     setBusy(true); status('Connecting…'); assistant = null;
     setActivity(t('Connecting to Pi…'), 'connecting');
     let reader;
